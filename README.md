@@ -8,6 +8,21 @@ the proof of concept: models from `llm.paelab.com`, web search and fetch from
 The VM is the trust boundary: the gateway holds the Docker socket, so anything
 that runs on the gateway is effectively root on the VM.
 
+## Quick start
+
+On a fresh Ubuntu Server VM, logged in as the admin user with your SSH key
+installed (`ssh-copy-id`), run:
+
+```bash
+git clone https://github.com/davepae/openclaw-docker-vm.git
+cd openclaw-docker-vm && ./bootstrap.sh
+```
+
+It runs phases 0 to 3b in order, prompts once for the sudo password and once
+for the Strata API key, then runs the checks. Every step is idempotent, so it
+is safe to re-run; `./bootstrap.sh --from N` resumes at a step. The Proxmox VM
+firewall (`firewall/proxmox-vm-rules.md`) and snapshots are done by hand.
+
 ## Status
 
 | Phase | What | Status |
@@ -16,7 +31,7 @@ that runs on the gateway is effectively root on the VM.
 | 1 | Network policy (`firewall/`) | done |
 | 2 | Gateway stack (`compose/`, `config/`) | done |
 | 3 | Sandbox image, policy, web tools (`sandbox/`, `config/`) | done |
-| 3b | Sandbox egress proxy (`compose/proxy/`) | ready |
+| 3b | Sandbox egress proxy (`compose/proxy/`) | done |
 | 4 | Access via SSH tunnel | |
 | 5 | Validation (`tests/validate.sh`) | |
 | 6 | Operate; read-only gateway root | |
