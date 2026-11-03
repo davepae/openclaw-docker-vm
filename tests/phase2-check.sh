@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Phase 2 exit check. Run on the VM as ocadmin:  ./tests/phase2-check.sh
+# Phase 2 exit check. Run on the VM as the admin user:  ./tests/phase2-check.sh
 set -uo pipefail
+# shellcheck source=tests/lib-site.sh
+source "$(cd "$(dirname "$0")" && pwd)/lib-site.sh"
 cd "$(dirname "$0")/../compose" || exit 1
 
 # Wait for a healthy gateway first: CLI checks fail while it is restarting.
@@ -10,7 +12,7 @@ for _ in $(seq 1 40); do
 done
 
 GW=openclaw-gateway
-MODEL="qwen3.8-flash-next-iq2_xs"
+MODEL="$LLM_MODEL"
 pass=0; fail=0
 ok()  { echo "PASS  $1"; ((pass++)); }
 bad() { echo "FAIL  $1"; ((fail++)); }
@@ -29,11 +31,11 @@ echo "-- container"
 check "runs as UID 1000 (not root)" test "$(docker exec "$GW" id -u)" = "1000"
 check "Docker CLI reaches the daemon (for Phase 3 sandboxes)" docker exec "$GW" docker version --format '{{.Server.Version}}'
 check_not "no internet from the gateway" gwnode "fetch('https://example.com',{signal:AbortSignal.timeout(6000)}).then(()=>process.exit(0),()=>process.exit(1))"
-check "Strata serves ${MODEL} to the gateway" gwnode "fetch('http://llm.paelab.com:8080/v1/models',{headers:{Authorization:'Bearer '+process.env.STRATA_API_KEY},signal:AbortSignal.timeout(10000)}).then(r=>r.text()).then(t=>process.exit(t.includes('${MODEL}')?0:1),()=>process.exit(1))"
+check "model server lists ${MODEL} to the gateway" gwnode "fetch(process.env.LLM_BASE_URL+'/models',{headers:{Authorization:'Bearer '+process.env.LLM_API_KEY},signal:AbortSignal.timeout(10000)}).then(r=>r.json()).then(j=>process.exit((j.data||[]).some(m=>m.id===process.env.LLM_MODEL)?0:1),()=>process.exit(1))"
 
 echo "-- policy"
 check "config is read-only (write refused)" bash -c "docker exec $GW openclaw config set gateway.port 1 2>&1 | grep -qi 'external deployment source'"
-check "default model is strata/${MODEL}" bash -c "docker exec $GW openclaw config get agents.defaults.model.primary 2>&1 | grep -q 'strata/${MODEL}'"
+check "default model is llm/${MODEL}" bash -c "docker exec $GW openclaw config get agents.defaults.model.primary 2>&1 | grep -qxF 'llm/${MODEL}'"
 check "exec host is sandbox-only" bash -c "docker exec $GW openclaw config get tools.exec.host 2>&1 | grep -qx sandbox"
 check "elevated is disabled"   bash -c "docker exec $GW openclaw config get tools.elevated.enabled 2>&1 | grep -q false"
 check "approvals: security=deny, askFallback=deny" bash -c "docker exec $GW openclaw approvals get 2>&1 | grep -q 'security=deny, ask=always, askFallback=deny'"

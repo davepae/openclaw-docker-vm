@@ -1,38 +1,33 @@
-# Proxmox VM firewall for `openclaw` (172.16.1.230)
+# Proxmox VM firewall for the OpenClaw VM
 
-This is the outer layer. It limits the whole VM; `DOCKER-USER` (see
-`oc-firewall.sh`) limits the gateway container inside it.
+This is the outer layer. It limits the whole VM; the `DOCKER-USER` chains (see
+`oc-firewall.sh`) limit the gateway container and the egress proxy inside it.
 
 | Dir | Action | Destination / source | Port | Why |
 | --- | --- | --- | --- | --- |
-| IN | Accept | from 172.16.1.175 (MacBook) | tcp 22 | SSH and the Control UI tunnel |
+| IN | Accept | from your admin machine (`ADMIN_IP`) | tcp 22 | SSH and the Control UI tunnel |
 | IN | Drop | everything else | | policy |
-| OUT | Accept | 172.16.1.67 (llm) | tcp 8080 | Strata |
-| OUT | Accept | 172.16.3.100 (intelnuc6) | tcp 8080, 3002 | SearXNG, Firecrawl |
-| OUT | Accept | 172.16.1.2 (pfSense) | udp/tcp 53 | DNS |
+| OUT | Accept | the model server | its port | model requests |
+| OUT | Accept | the SearXNG and Firecrawl host(s) | their ports | web search and fetch |
+| OUT | Accept | your DNS server(s) | udp/tcp 53 | name resolution |
 | OUT | Accept | any | udp 123 | NTP |
-| OUT | Drop | 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 | | rest of the LAN and DMZ |
-| OUT | Accept | any (internet) | tcp 80, 443 | host apt updates and Docker image pulls |
+| OUT | Drop | 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 | | the rest of the LAN |
+| OUT | Accept | any (internet) | tcp 80, 443 | host updates, image pulls, the sandbox proxy's registries |
 | OUT | Drop | everything else | | policy |
 
-Containers never get the internet through the last Accept: `DOCKER-USER`
-drops it for `oc-gw` before the packet leaves the VM.
+Containers never get the internet through the last Accept: `DOCKER-USER` drops
+it for the gateway network, and the sandbox proxy only forwards HTTPS to its
+allowlist.
 
-## Apply
+## Get your rules
 
-1. **Datacenter → Firewall → Options → Firewall: Yes.** VM rules do nothing
-   until this is on. Before turning it on, check **Datacenter → Firewall →
-   Options → Input Policy**: Proxmox auto-allows its web UI (8006) and SSH
-   from the host's local network, but if you have changed that or manage
-   Proxmox from another subnet, add an accept rule first so you don't lock
-   yourself out.
-2. Confirm the VM's NIC has **Firewall** ticked (Hardware → Network Device).
-3. On the Proxmox host, write the rules below to
-   `/etc/pve/firewall/<vmid>.fw` (replace `<vmid>` with the VM's ID), or
-   enter them in **VM → Firewall** in the same order. Proxmox applies them
-   top to bottom.
-4. **VM → Firewall → Options → Firewall: Yes.**
-5. Keep your current SSH session open and test a new one from the MacBook.
+The addresses come from `site.env`, so print your rules on the VM:
+
+```bash
+./firewall/proxmox-rules.sh
+```
+
+The output is a complete `.fw` file, in this shape:
 
 ```
 [OPTIONS]
@@ -42,10 +37,11 @@ policy_out: DROP
 dhcp: 1
 
 [RULES]
-IN SSH(ACCEPT) -source 172.16.1.175
-OUT ACCEPT -dest 172.16.1.67 -p tcp -dport 8080
-OUT ACCEPT -dest 172.16.3.100 -p tcp -dport 8080,3002
-OUT DNS(ACCEPT) -dest 172.16.1.2
+IN SSH(ACCEPT) -source <ADMIN_IP>
+OUT ACCEPT -dest <model server IP> -p tcp -dport <port>
+OUT ACCEPT -dest <SearXNG IP> -p tcp -dport <port>
+OUT ACCEPT -dest <Firecrawl IP> -p tcp -dport <port>
+OUT DNS(ACCEPT) -dest <DNS server>
 OUT NTP(ACCEPT)
 OUT DROP -dest 10.0.0.0/8
 OUT DROP -dest 172.16.0.0/12
@@ -54,13 +50,46 @@ OUT HTTP(ACCEPT)
 OUT HTTPS(ACCEPT)
 ```
 
+Rules apply top to bottom, so the accepts for your servers come before the
+drops for private ranges. If a server's address changes, re-run
+`./configure.sh`, `sudo ./firewall/install.sh` and this script, and update the
+file on the Proxmox host.
+
+## Apply
+
+1. **Protect your access to Proxmox first.** VM rules only work when the
+   datacenter firewall is on, and turning that on applies its Input Policy
+   (usually DROP) to the Proxmox host itself. In **Datacenter → Firewall**, add
+   accept rules for the Proxmox web UI (tcp 8006) and SSH (tcp 22) from the
+   network you manage Proxmox from, before the next step.
+2. **Datacenter → Firewall → Options → Firewall: Yes.** Then open the Proxmox
+   UI in a new browser tab to confirm you can still get in.
+3. Confirm the VM's NIC has **Firewall** ticked (VM → Hardware → Network
+   Device).
+4. On the Proxmox host (your node → Shell), write the rules to
+   `/etc/pve/firewall/<vmid>.fw`, with `<vmid>` the VM's ID from the tree:
+
+   ```bash
+   VMID=101    # your VM's ID
+   cat > /etc/pve/firewall/${VMID}.fw <<'RULES'
+   ...paste the output of ./firewall/proxmox-rules.sh here...
+   RULES
+   pve-firewall compile >/dev/null && echo "rules OK"
+   ```
+
+   `enable: 1` turns the VM's firewall on immediately (VM → Firewall →
+   Options shows Firewall: Yes).
+5. Keep your current SSH session open and test a new one from the admin
+   machine. If it hangs, set VM → Firewall → Options → Firewall to No, fix
+   `ADMIN_IP`, and try again. The VM's console in Proxmox always works.
+
 ## Notes
 
-- **MacBook IP:** if 172.16.1.175 comes from DHCP, give it a reservation in
-  Kea on pfSense, or you'll be locked out of SSH when it changes. The Proxmox
-  console still works if that happens.
-- **intelnuc6 is on the DMZ.** The VM is on the LAN, and pfSense's default LAN
-  rule allows LAN to DMZ, so no pfSense change should be needed. If the
-  SearXNG or Firecrawl checks fail, look at the pfSense LAN rules first.
-- **`dhcp: 1`** lets the VM renew a DHCP lease through the firewall. Harmless
-  with a static address.
+- **Admin machine address:** if it comes from DHCP, give it a reservation on
+  your router, or SSH stops working when the address changes. `ADMIN_IP` can
+  also be a small subnet (no wider than /16).
+- **Services on another network segment** (for example a DMZ): the router
+  between the segments must allow the VM to reach them; these rules only cover
+  the VM itself.
+- **`dhcp: 1`** lets the VM renew a DHCP lease through the firewall. It is
+  harmless with a static address.

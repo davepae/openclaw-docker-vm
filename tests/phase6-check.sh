@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Phase 6 exit check: read-only gateway root, plugin allowlist, backups.
-# Run on the VM as ocadmin:  ./tests/phase6-check.sh
+# Run on the VM as the admin user:  ./tests/phase6-check.sh
 set -uo pipefail
 cd "$(dirname "$0")/../compose" || exit 1
 

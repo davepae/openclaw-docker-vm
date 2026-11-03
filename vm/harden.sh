@@ -6,7 +6,10 @@ set -euo pipefail
 
 [[ $EUID -eq 0 ]] || { echo "Run with sudo: sudo $0"; exit 1; }
 
-ADMIN_USER="${SUDO_USER:-ocadmin}"
+# The admin user is whoever ran sudo. SSH is restricted to that account, so
+# refuse to guess (a root shell would lock everyone else out).
+ADMIN_USER="${SUDO_USER:-}"
+[[ -n "$ADMIN_USER" && "$ADMIN_USER" != root ]] || { echo "Run from your admin account with sudo, not from a root shell."; exit 1; }
 OC_ROOT="/srv/openclaw"
 OC_UID=1000   # matches the 'node' user inside the OpenClaw image
 OC_GID=1000
@@ -19,7 +22,8 @@ log "Pre-flight checks"
 AUTH="/home/${ADMIN_USER}/.ssh/authorized_keys"
 if [[ ! -s "$AUTH" ]]; then
   echo "No SSH keys in ${AUTH}. Refusing to disable password login."
-  echo "Add your public key first (e.g. ssh-import-id gh:davepae), then re-run."
+  echo "Add your public key first (from your admin machine: ssh-copy-id ${ADMIN_USER}@<this VM>),"
+  echo "then re-run."
   exit 1
 fi
 if [[ "$(id -u "$ADMIN_USER")" != "$OC_UID" ]]; then

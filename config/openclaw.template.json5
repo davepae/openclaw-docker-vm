@@ -1,9 +1,12 @@
-// OpenClaw gateway config for the openclaw VM. JSON5.
-// Mounted READ-ONLY into the gateway (OPENCLAW_CONFIG_READONLY=1): the agent
-// cannot change its own policy. Edit here, commit, git pull on the VM, then
-// `docker compose up -d --force-recreate openclaw-gateway`.
+// OpenClaw gateway config TEMPLATE. JSON5.
+// compose/install.sh renders it into config/generated/openclaw.json5, filling
+// each placeholder from site.env (see ./configure.sh), and mounts the
+// result READ-ONLY into the gateway (OPENCLAW_CONFIG_READONLY=1): the agent
+// cannot change its own policy. Edit here, then re-run ./compose/install.sh.
 //
-// ${VARS} come from compose/.env on the VM (never committed).
+// ${VARS} are resolved by OpenClaw from the gateway's environment at runtime,
+// so secrets never land in the rendered file: OPENCLAW_GATEWAY_TOKEN and
+// FIRECRAWL_API_KEY come from compose/.env, LLM_API_KEY from site.env.
 {
   gateway: {
     mode: "local",
@@ -18,22 +21,23 @@
   models: {
     mode: "merge",
     providers: {
-      strata: {
-        baseUrl: "http://llm.paelab.com:8080/v1",
-        apiKey: "${STRATA_API_KEY}",
+      // Any OpenAI-compatible server: Strata, Ollama, LM Studio, vLLM, llama.cpp ...
+      llm: {
+        baseUrl: @@LLM_BASE_URL@@,
+        apiKey: "${LLM_API_KEY}",
         api: "openai-completions",
         timeoutSeconds: 300, // local model; long first-token times are normal
         models: [
           {
-            id: "qwen3.8-flash-next-iq2_xs",
-            name: "Qwen3.8 Flash Next IQ2_XS (Strata)",
+            id: @@LLM_MODEL@@,
+            name: @@LLM_MODEL@@,
             reasoning: false,
-            input: ["text", "image"],
+            input: @@LLM_INPUT@@,
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            // Strata runs 131072 context with 2 parallel slots. If it splits
-            // context per slot, lower this to 65536.
-            contextWindow: 131072,
-            maxTokens: 8192,
+            // Must not exceed the server's own context setting (Ollama defaults
+            // to 4096; raise it on the server with OLLAMA_CONTEXT_LENGTH).
+            contextWindow: @@LLM_CONTEXT_WINDOW@@,
+            maxTokens: @@LLM_MAX_TOKENS@@,
           },
         ],
       },
@@ -45,7 +49,7 @@
       // Host path, mounted at the same path in the gateway (sibling sandboxes
       // are created by the host's Docker daemon, which resolves host paths).
       workspace: "/srv/openclaw/workspace",
-      model: { primary: "strata/qwen3.8-flash-next-iq2_xs" },
+      model: { primary: @@LLM_PRIMARY@@ },
       // Every session runs its tools in a Docker sandbox: one long-lived
       // container per agent, with the real workspace mounted at /workspace.
       sandbox: {
@@ -91,16 +95,19 @@
     // behind a search step (the default for OpenAI-compatible providers), and
     // drop the progress-card UI tool. The model (125B at IQ2_XS) was spending its turns on
     // tool_search and progress_card instead of the task.
-    toolSearch: false,
+    // toolSearch is set from the context window by scripts/site_settings.py:
+    // off (all tool schemas in the prompt, about 35k tokens) at 65536 or more,
+    // on (about 15k tokens) below that, where the full set would not fit.
+    toolSearch: @@TOOL_SEARCH@@,
     updatePlan: false,
     // Sandboxed sessions only get a default tool allowlist, which omits web
     // tools. These two run on the gateway (which can reach SearXNG and
     // Firecrawl), not in the sandbox, so the sandbox itself stays offline.
     sandbox: { tools: { alsoAllow: ["web_search", "web_fetch"] } },
     web: {
-      // Search through SearXNG on intelnuc6.
+      // Search through the self-hosted SearXNG.
       search: { provider: "searxng", maxResults: 8, timeoutSeconds: 30 },
-      // Page fetches go through Firecrawl on intelnuc6; the gateway has no
+      // Page fetches go through the self-hosted Firecrawl; the gateway has no
       // direct internet, so a plain fetch would fail.
       fetch: { provider: "firecrawl" },
     },
@@ -112,18 +119,18 @@
     // Phase 6: load only these. Without an allowlist 2026.10.10 enables ~40
     // bundled plugins (browser, computer use, file transfer, cloud model
     // providers...). device-pair is needed for Control UI browser pairing.
-    // Tested: an agent turn against the Strata provider works with only these.
+    // Tested: an agent turn against the model provider works with only these.
     allow: ["searxng", "firecrawl", "memory-core", "device-pair"],
     entries: {
       searxng: {
         enabled: true,
-        config: { webSearch: { baseUrl: "http://172.16.3.100:8080" } },
+        config: { webSearch: { baseUrl: @@SEARXNG_URL@@ } },
       },
       firecrawl: {
         enabled: true,
         config: {
-          webSearch: { baseUrl: "http://172.16.3.100:3002", apiKey: "${FIRECRAWL_API_KEY}" },
-          webFetch: { baseUrl: "http://172.16.3.100:3002", apiKey: "${FIRECRAWL_API_KEY}" },
+          webSearch: { baseUrl: @@FIRECRAWL_URL@@, apiKey: "${FIRECRAWL_API_KEY}" },
+          webFetch: { baseUrl: @@FIRECRAWL_URL@@, apiKey: "${FIRECRAWL_API_KEY}" },
         },
       },
     },

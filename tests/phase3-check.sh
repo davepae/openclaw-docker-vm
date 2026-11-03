@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Phase 3 exit check. Run on the VM as ocadmin:  ./tests/phase3-check.sh
+# Phase 3 exit check. Run on the VM as the admin user:  ./tests/phase3-check.sh
 # Part 1 runs any time. Part 2 needs a live sandbox: ask the agent in the
 # Control UI to run a command first, then run this again.
 set -uo pipefail
+# shellcheck source=tests/lib-site.sh
+source "$(cd "$(dirname "$0")" && pwd)/lib-site.sh"
 cd "$(dirname "$0")/../compose" || exit 1
 
 # Wait for a healthy gateway first: CLI checks fail while it is restarting.
@@ -51,7 +53,7 @@ else
   check "Docker socket not mounted"  bash -c "! docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' $sbx | grep -q docker.sock"
   check "workspace is /srv/openclaw/workspace" bash -c "docker inspect -f '{{range .Mounts}}{{.Source}}={{.Destination}} {{end}}' $sbx | grep -q '/srv/openclaw/workspace=/workspace'"
   check "internet unreachable from sandbox"    bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 https://example.com' >/dev/null 2>&1"
-  check "LAN unreachable from sandbox"         bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 http://172.16.1.67:8080/' >/dev/null 2>&1"
+  check "LAN (model server) unreachable from sandbox" bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 http://${LLM_IP}:${LLM_PORT}/' >/dev/null 2>&1"
   gwip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' openclaw-gateway)"
   check "gateway API unreachable from sandbox" bash -c "[ -n '${gwip}' ] && ! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 http://${gwip}:18789/healthz' >/dev/null 2>&1"
   check "no DNS from sandbox (no DNS exfiltration channel)" bash -c "! docker exec $sbx getent hosts example.com >/dev/null 2>&1"

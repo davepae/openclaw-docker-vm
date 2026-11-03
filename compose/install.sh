@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Phase 2 — build and start the OpenClaw gateway container.
-# Run on the VM as ocadmin, from anywhere in the repo:  ./compose/install.sh
-# Safe to re-run (it keeps the existing token and key in compose/.env).
+# Run on the VM as the admin user, from anywhere in the repo:  ./compose/install.sh
+# Safe to re-run (it keeps the existing token in compose/.env). Site values
+# (model server, web tools) come from site.env; see ./configure.sh.
 set -Eeuo pipefail  # -E: the ERR trap also fires inside functions
 cd "$(dirname "$0")"
 
-[[ $EUID -ne 0 ]] || { echo "Run as ocadmin, not with sudo."; exit 1; }
+[[ $EUID -ne 0 ]] || { echo "Run as your admin user, not with sudo."; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Can't reach Docker. Log out and back in after harden.sh."; exit 1; }
 docker network inspect oc-gw >/dev/null 2>&1 || { echo "Network oc-gw missing. Run: sudo ./firewall/install.sh"; exit 1; }
+[[ -f ../site.env ]] || { echo "site.env missing. Run ./configure.sh first."; exit 1; }
+python3 ../scripts/site_settings.py check >/dev/null
 
 log() { printf '\n==> %s\n' "$*"; }
 
@@ -35,11 +38,6 @@ fi
 chmod 600 .env
 
 [[ -n "$(getvar OPENCLAW_GATEWAY_TOKEN)" ]] || setvar OPENCLAW_GATEWAY_TOKEN "$(openssl rand -hex 32)"
-if [[ -z "$(getvar STRATA_API_KEY)" ]]; then
-  read -rsp "Strata API key (input hidden): " key; echo
-  [[ -n "$key" && "$key" != *"'"* ]] || { echo "Empty key, or it contains a single quote."; exit 1; }
-  setvar STRATA_API_KEY "$key"
-fi
 setvar DOCKER_GID "$(stat -c %g /var/run/docker.sock)"
 # Self-hosted Firecrawl ignores the key, but OpenClaw's Firecrawl tools require one.
 [[ -n "$(getvar FIRECRAWL_API_KEY)" ]] || setvar FIRECRAWL_API_KEY "selfhosted"
@@ -59,21 +57,33 @@ docker compose build -q openclaw-gateway
 
 oneshot() { docker compose run --rm --no-deps -T --entrypoint node openclaw-gateway dist/index.js "$@"; }
 
+# Render the config from the template and site.env into a staging file first,
+# so a bad setting stops here without touching the running gateway. The
+# rendered file holds no secrets (they stay ${VAR} references) and is mode 600:
+# OpenClaw's startup self-check otherwise tries to chmod it, which fails on the
+# read-only mount.
+GEN=../config/generated
+log "Rendering the config from the template and site.env"
+install -d -m 0700 "$GEN"
+python3 ../scripts/site_settings.py render-config > "$GEN/.openclaw.json5.new"
+chmod 600 "$GEN/.openclaw.json5.new" ../config/exec-approvals.json
+
 # One-shot commands need the state lock, so a running gateway is stopped first
 # (OpenClaw's recommended upgrade order: stop the old one, then start the new).
 if [[ "$(docker inspect -f '{{.State.Running}}' openclaw-gateway 2>/dev/null)" == "true" ]]; then
   log "Stopping the running gateway"
   docker compose stop openclaw-gateway
-  # If validation or approvals fail, don't leave the gateway down.
-  trap 'echo "!! Failed; starting the previous gateway again"; docker compose start openclaw-gateway || true' ERR
+  # Keep the config it was running with. If anything below fails, put that
+  # config back and start the previous gateway, so it is never left down.
+  [[ -f "$GEN/openclaw.json5" ]] && cp -p "$GEN/openclaw.json5" "$GEN/.openclaw.json5.prev"
+  trap 'echo "!! Failed; restoring the previous config and starting the previous gateway"
+        [[ -f "$GEN/.openclaw.json5.prev" ]] && mv -f "$GEN/.openclaw.json5.prev" "$GEN/openclaw.json5"
+        docker compose start openclaw-gateway || true' ERR
 fi
 
-# OpenClaw's startup self-check wants its config at mode 600 and otherwise
-# tries to chmod it, which fails on the read-only mount (EROFS in the logs).
-# Git tracks only the executable bit, so this never shows as a change.
-chmod 600 ../config/openclaw.json5 ../config/exec-approvals.json
+mv -f "$GEN/.openclaw.json5.new" "$GEN/openclaw.json5"
 
-log "Validating config/openclaw.json5"
+log "Validating the rendered config"
 oneshot config validate
 
 log "Writing the exec approvals policy (host exec: deny)"
@@ -88,6 +98,7 @@ if [[ -n "$(docker ps -aq --filter 'name=^openclaw-sbx-')" ]]; then
 fi
 
 trap - ERR
+rm -f "$GEN/.openclaw.json5.prev"
 log "Starting the gateway"
 docker compose up -d --force-recreate openclaw-gateway
 
@@ -100,14 +111,15 @@ done
 echo " ${status:-unknown}"
 [[ "$status" == "healthy" ]] || { echo "Gateway not healthy. Check: docker compose logs openclaw-gateway"; exit 1; }
 
-cat <<'EOF'
+VM_ADDR="$(hostname -I | awk '{print $1}')"
+cat <<EOF
 
 OpenClaw gateway is running.
 
-1. From the MacBook, open the tunnel (leave it running):
-     ssh -N -L 18789:127.0.0.1:18789 ocadmin@openclaw.paelab.com
+1. From your admin machine, open the tunnel (leave it running):
+     ssh -N -L 18789:127.0.0.1:18789 ${USER}@${VM_ADDR}
 2. Browse to http://127.0.0.1:18789/ and paste the gateway token, shown by:
-     grep OPENCLAW_GATEWAY_TOKEN ~/openclaw-docker-vm/compose/.env
+     grep OPENCLAW_GATEWAY_TOKEN $(cd .. && pwd)/compose/.env
 3. If the UI says "pairing required", approve the browser on the VM:
      docker exec -it openclaw-gateway openclaw devices list
      docker exec -it openclaw-gateway openclaw devices approve <requestId>

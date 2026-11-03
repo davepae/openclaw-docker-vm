@@ -76,9 +76,9 @@ HTTPS.
 
 ## What the agent gets
 
-- **Model:** a local OpenAI-compatible server (in the reference build: Strata
-  serving `qwen3.8-flash-next-iq2_xs` on a LAN host; point
-  `config/openclaw.json5` at your own server).
+- **Model:** any local OpenAI-compatible server you choose at install time:
+  Strata, Ollama, LM Studio, vLLM, llama.cpp and the like (the reference build
+  uses Strata serving `qwen3.8-flash-next-iq2_xs`).
 - **Web:** `web_search` through SearXNG and `web_fetch` through Firecrawl. Both
   run on the gateway, so the sandbox itself stays without internet.
 - **Sandbox toolchains:** Python 3.13 with PDF libraries (pypdf, pdfplumber,
@@ -107,10 +107,11 @@ HTTPS.
   (VirtIO SCSI single, discard on), VirtIO NIC with the Proxmox firewall
   enabled. Install OpenSSH and import your SSH key; do not install the Docker
   snap.
-- An admin account (here `ocadmin`) that is the first user, so it is UID 1000
-  like the `node` user in the OpenClaw image.
-- An OpenAI-compatible model server, and SearXNG and Firecrawl instances,
-  reachable from the VM.
+- An admin account (any name; the reference build uses `ocadmin`) that is the
+  first user, so it is UID 1000 like the `node` user in the OpenClaw image.
+- An OpenAI-compatible model server on your LAN, serving a model that supports
+  tool calling with a context window of at least 32k tokens (64k recommended).
+- SearXNG and Firecrawl instances reachable from the VM.
 
 ## Quick start
 
@@ -121,12 +122,13 @@ git clone https://github.com/davepae/openclaw-docker-vm.git
 cd openclaw-docker-vm && ./bootstrap.sh
 ```
 
-It prompts once for the sudo password and once for the model server's API key,
-then runs every phase and all the checks. Every step is idempotent, so it is
-safe to re-run on a built VM; `./bootstrap.sh --from N` resumes at a step.
+It asks for the sudo password, then for your site settings (below), then runs
+every phase and all the checks. Every step is idempotent, so it is safe to
+re-run on a built VM; `./bootstrap.sh --from N` resumes at a step.
 
 | Step | What | Script |
 | --- | --- | --- |
+| 0 | Site settings (first run only) | `configure.sh` |
 | 1 | Base hardening, Docker Engine | `vm/harden.sh` |
 | 2 | Firewall rules and Docker networks | `firewall/install.sh` |
 | 3 | Gateway container | `compose/install.sh` |
@@ -137,21 +139,65 @@ safe to re-run on a built VM; `./bootstrap.sh --from N` resumes at a step.
 
 Done by hand, outside the VM:
 
-1. Proxmox VM firewall, from `firewall/proxmox-vm-rules.md` (first build only).
+1. Proxmox VM firewall: `./firewall/proxmox-rules.sh` prints your rules; apply
+   them as in `firewall/proxmox-vm-rules.md` (first build only).
 2. A Proxmox backup job for the VM to storage on another machine
    (Datacenter → Backup → Add, mode Snapshot).
 3. A Proxmox snapshot of the finished VM.
 
-## Adapting it to your network
+## Site settings
 
-The values specific to this lab live in four places:
+`./configure.sh` asks for the values specific to your network and writes them
+to `site.env` in the repo (mode 600, git-ignored). Press Enter to keep the
+value in brackets. Each answer is checked as you go: the URLs must resolve to
+IPv4 addresses on other machines, and the script lists the models the server
+offers.
 
-| File | Holds |
+| Setting | What to enter |
 | --- | --- |
-| `firewall/firewall.conf` | IPs and ports the gateway may reach, LAN DNS, Docker subnets |
-| `firewall/proxmox-vm-rules.md` | VM firewall rules: admin machine, LAN services |
-| `config/openclaw.json5` | Model server URL and model, SearXNG and Firecrawl URLs, sandbox limits |
-| `compose/.env` (created on the VM, git-ignored) | OpenClaw version and image digest, gateway token, API keys |
+| `LLM_BASE_URL` | The server's OpenAI-compatible base URL, ending in `/v1` |
+| `LLM_MODEL` | The model id exactly as the server lists it under `/v1/models` |
+| `LLM_API_KEY` | The server's API key; any placeholder such as `none` if it has none (typed hidden) |
+| `LLM_CONTEXT_WINDOW` | The context size the server actually runs the model with, in tokens (at least 32768) |
+| `LLM_MAX_TOKENS` | Longest reply per request (default 8192) |
+| `LLM_IMAGE_INPUT` | `yes` only if the model accepts images |
+| `SEARXNG_URL`, `FIRECRAWL_URL` | Base URLs of your SearXNG and Firecrawl |
+| `DNS_SERVERS` | The DNS server(s) the gateway may use (detected from the VM) |
+| `ADMIN_IP` | Your admin machine's address, for the Proxmox SSH rule |
+
+Everything else is derived from these: the OpenClaw config is rendered from
+`config/openclaw.template.json5`, the gateway allowlist from the resolved
+addresses and ports, and the Proxmox rules from both. `site.env.example`
+shows the format.
+
+**Model server examples.** Use the address the VM reaches the server on, never
+`localhost`.
+
+| Server | Base URL | API key | Before you start |
+| --- | --- | --- | --- |
+| Strata | `http://<host>:8080/v1` | the server's key | |
+| Ollama | `http://<host>:11434/v1` | `none` (ignored) | Ollama listens on 127.0.0.1 only: set `OLLAMA_HOST=0.0.0.0`. Its default context is 4096 tokens, too small: set `OLLAMA_CONTEXT_LENGTH=65536` (at least 32768) and enter the same number here. |
+| LM Studio | `http://<host>:1234/v1` | `none`, or the token if you turned on authentication | Turn on serving on the local network in the Developer tab, and load the model with a context length of at least 32768. Model ids look like `author/model`. |
+
+**Tool Search is set from the context size.** With a context window of 64k
+(65536) or more, all tools are given to the model directly, which works best
+with small or heavily quantized models. Below that, the full tool list alone
+(about 35k tokens) would not fit, so OpenClaw's Tool Search is turned on and
+tool schemas are fetched on demand (about 15k tokens per request).
+
+**Changing a setting later:**
+
+```bash
+./configure.sh                 # current values are the defaults
+./compose/install.sh           # re-renders the config and restarts the gateway
+sudo ./firewall/install.sh     # only if a server address, port or DNS changed
+./firewall/proxmox-rules.sh    # then update the VM's rules on the Proxmox host
+```
+
+The remaining lab-independent settings live in `config/openclaw.template.json5`
+(sandbox limits, tool policy) and `firewall/firewall.conf` (Docker subnets);
+`compose/.env` (created on the VM, git-ignored) holds the OpenClaw version and
+image digest and the gateway token.
 
 ## Using it
 
@@ -159,7 +205,8 @@ From the admin machine, open a tunnel and browse to the Control UI:
 
 ```bash
 VM=192.168.1.50        # your VM's IP address or hostname, e.g. openclaw.example.lan
-ssh -N -L 18789:127.0.0.1:18789 ocadmin@$VM
+ADMIN=ocadmin          # your admin user on the VM
+ssh -N -L 18789:127.0.0.1:18789 $ADMIN@$VM
 # then open http://127.0.0.1:18789/ and paste the token:
 #   grep OPENCLAW_GATEWAY_TOKEN ~/openclaw-docker-vm/compose/.env
 ```
@@ -179,8 +226,8 @@ workspace. To get the agent's files out, pull them from your own machine, for
 example from a folder the agent writes to:
 
 ```bash
-VM=192.168.1.50        # your VM's IP address or hostname, as above
-rsync -av ocadmin@$VM:/srv/openclaw/workspace/outbox/ ~/OpenClaw-outbox/
+VM=192.168.1.50; ADMIN=ocadmin   # as above
+rsync -av $ADMIN@$VM:/srv/openclaw/workspace/outbox/ ~/OpenClaw-outbox/
 ```
 
 Pulling keeps the VM inbound-only, and the agent never writes to a share that
@@ -191,17 +238,19 @@ untrusted content.
 
 | Change | How |
 | --- | --- |
-| OpenClaw config | Edit `config/openclaw.json5`, commit, `git pull` on the VM, `./compose/install.sh` |
-| Gateway LAN allowlist | Edit `firewall/firewall.conf`, `sudo ./firewall/install.sh` |
+| Model server, web tools, DNS, admin IP | `./configure.sh`, then as in [Site settings](#site-settings) |
+| OpenClaw config | Edit `config/openclaw.template.json5`, commit, `git pull` on the VM, `./compose/install.sh` |
 | Sandbox package allowlist | Edit `compose/proxy/allowlist.txt`, then `cd compose && docker compose restart oc-proxy` |
-| Sandbox tools | Edit `sandbox/Dockerfile` or `sandbox/requirements.txt`, bump the image tag (`openclaw-sandbox-local:N`) in `sandbox/install.sh`, `config/openclaw.json5` and `tests/phase3-check.sh`, then `./sandbox/install.sh`. Remove the old image afterwards (`docker image rm openclaw-sandbox-local:<old N>`) |
-| Cut sandboxes off the network | Set sandbox `network: "none"` in `config/openclaw.json5`, `./compose/install.sh` |
+| Sandbox tools | Edit `sandbox/Dockerfile` or `sandbox/requirements.txt`, bump the image tag (`openclaw-sandbox-local:N`) in `sandbox/install.sh`, `config/openclaw.template.json5` and `tests/phase3-check.sh`, then `./sandbox/install.sh`. Remove the old image afterwards (`docker image rm openclaw-sandbox-local:<old N>`) |
+| Cut sandboxes off the network | Set sandbox `network: "none"` in `config/openclaw.template.json5`, `./compose/install.sh` |
 | Watch proxy decisions | `docker logs -f oc-proxy` (`TCP_TUNNEL/200` allowed, `TCP_DENIED/403` denied) |
 | Back up now | `sudo systemctl start openclaw-backup` |
 
-`compose/install.sh` stops the gateway, validates the config, writes the exec
-approvals policy, recreates sandboxes so they pick up changes, and starts the
-gateway again. If a step fails, it starts the previous gateway.
+`compose/install.sh` renders the config from the template and `site.env`
+(stopping before it touches the gateway if a setting is wrong), stops the
+gateway, validates the config, writes the exec approvals policy, recreates
+sandboxes so they pick up changes, and starts the gateway again. If a step
+fails, it puts the previous config back and starts the previous gateway.
 
 ## Upgrading OpenClaw
 
@@ -214,14 +263,35 @@ gateway again. If a step fails, it starts the previous gateway.
    2026-10-01; if a release removes them, this is where it shows.
 5. Run all the checks.
 
+## Upgrading from v0.3
+
+v0.4 moves the lab values out of the tracked files into `site.env`. The model
+provider is renamed from `strata` to `llm`; existing sessions keep working.
+
+1. Proxmox snapshot of the VM.
+2. Save the current effective config for comparison:
+   `docker exec openclaw-gateway openclaw config get models --json > ~/v03-models.json`
+3. `git fetch --tags && git checkout v0.4`, then `./configure.sh`. Your
+   existing API key is offered as the default; enter your current server
+   values for the rest.
+4. `./compose/install.sh`, then `sudo ./firewall/install.sh`.
+5. Run all the checks. Compare
+   `docker exec openclaw-gateway openclaw config get models --json` with the
+   saved file: only the provider name (`strata` → `llm`) and the model's
+   display name should differ.
+
+The first run of the new layout has no previous rendered config to fall back
+on. If it fails, roll back to the snapshot, or `git checkout v0.3 &&
+./compose/install.sh`.
+
 ## Backups and restore
 
 `openclaw-backup.timer` runs `openclaw backup create --verify` nightly at about
 03:15 into `/srv/openclaw/backups`, keeping 14 days. It is safe while the
 gateway runs; never copy live `.sqlite` files. The archives sit on the VM's own
-disk, so pair them with the Proxmox backup job. `compose/.env` is in the VM
-backup but not the OpenClaw archive; its only secret you cannot regenerate is
-the model server's API key.
+disk, so pair them with the Proxmox backup job. `site.env` and `compose/.env`
+are in the VM backup but not the OpenClaw archive; the only secret in them you
+cannot regenerate is the model server's API key.
 
 `openclaw backup restore` extracts into a fresh directory, never over live
 state:
@@ -257,8 +327,9 @@ command in a new chat, then re-run the check.
 - **Paths are identical on host and gateway.** Sandboxes are created by the
   host's Docker daemon, so `/srv/openclaw` is mounted at the same path inside
   the gateway.
-- **The config directory is mounted, not the file.** A `git pull` replaces the
-  file, and a single-file mount would keep showing the old one.
+- **The config directory is mounted, not the file.** `compose/install.sh`
+  replaces the rendered file (`config/generated/openclaw.json5`), and a
+  single-file mount would keep showing the old one.
 - **`plugins list` is not what loads.** It shows the plugin registry. The
   gateway's startup line (`http server listening (4 plugins: ...)`) is the
   real set.
@@ -267,7 +338,9 @@ command in a new chat, then re-run the check.
   behind a search step) and offers a `progress_card` UI tool. The local model
   here (125B parameters, quantized to IQ2_XS, about 2.3 bits per weight) spent
   a multi-step task on those and stopped; with `tools.toolSearch: false` and
-  `tools.updatePlan: false` the same prompt succeeded. Aggressive quantization
+  `tools.updatePlan: false` the same prompt succeeded. The config therefore
+  turns Tool Search off whenever the context window allows it (see
+  [Site settings](#site-settings)), and `updatePlan` is always off. Aggressive quantization
   tends to cost precise tool use and multi-step planning more than chat. If a
   task still stalls, give one concrete step per message.
 - **Sandbox `/tmp` is `noexec`.** Go's temporary build directory is therefore
@@ -276,12 +349,16 @@ command in a new chat, then re-run the check.
 ## Layout
 
 ```
-bootstrap.sh            one-command build (steps 1-7)
+bootstrap.sh            one-command build (steps 0-7)
+configure.sh            asks for the site settings, writes site.env
+site.env.example        format of site.env (the real one is git-ignored)
+scripts/site_settings.py  validates site.env, renders the config and firewall values
 vm/harden.sh            base hardening and Docker Engine
 firewall/               DOCKER-USER chains, networks, Proxmox VM rules
 compose/                gateway and proxy stack, .env template, gateway image
 compose/proxy/          Squid config and package allowlist
-config/                 OpenClaw config (read-only in the gateway), approvals policy
+config/                 OpenClaw config template, approvals policy; generated/ holds
+                        the rendered config (read-only in the gateway)
 sandbox/                sandbox image, install scripts
 backup/                 nightly backup script and systemd units
 tests/                  check scripts, one per phase

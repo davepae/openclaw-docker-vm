@@ -11,22 +11,27 @@ x-openclaw-env: &openclaw-env
   OPENCLAW_STATE_DIR: /srv/openclaw/state
   OPENCLAW_CONFIG_DIR: /srv/openclaw/state
   OPENCLAW_WORKSPACE_DIR: /srv/openclaw/workspace
-  # Config comes from the repo, read-only. The whole config/ directory is
-  # mounted (not the single file) so a git pull is seen after a restart.
+  # Config is rendered by install.sh from config/openclaw.template.json5 and
+  # site.env into config/generated/, mounted read-only. The directory is
+  # mounted (not the single file) so a re-render is seen after a restart.
   OPENCLAW_CONFIG_PATH: /run/config/openclaw.json5
   OPENCLAW_CONFIG_READONLY: "1"
   OPENCLAW_GATEWAY_PORT: "18789"
   OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?run install.sh first}
-  STRATA_API_KEY: ${STRATA_API_KEY:?run install.sh first}
   FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-selfhosted}
   OPENCLAW_DISABLE_BONJOUR: "1"
   # Phase 6: caches on the state volume, since the container root is read-only.
   XDG_CACHE_HOME: /srv/openclaw/state/.cache
   TZ: ${TZ:-UTC}
 
+# Site settings (model server URL, model name, API key, ...) from ./configure.sh.
+x-openclaw-site: &openclaw-site
+  - path: ../site.env
+    required: true
+
 x-openclaw-volumes: &openclaw-volumes
   - /srv/openclaw:/srv/openclaw
-  - ../config:/run/config:ro
+  - ../config/generated:/run/config:ro
   - /srv/openclaw/auth-secrets:/home/node/.config/openclaw
 
 services:
@@ -38,10 +43,11 @@ services:
         OPENCLAW_IMAGE: ${OPENCLAW_IMAGE:?run install.sh first}
     image: openclaw-gateway-local:${OPENCLAW_VERSION:?}
     container_name: openclaw-gateway
+    env_file: *openclaw-site
     environment: *openclaw-env
     volumes:
       - /srv/openclaw:/srv/openclaw
-      - ../config:/run/config:ro
+      - ../config/generated:/run/config:ro
       - /srv/openclaw/auth-secrets:/home/node/.config/openclaw
       # Lets the gateway start sibling sandbox containers. This is root-equivalent
       # on the VM, which is why the VM is the trust boundary.
@@ -89,6 +95,7 @@ services:
     network_mode: "service:openclaw-gateway"
     # OpenClaw verifies its state lock by PID; the CLI must see the gateway's processes.
     pid: "service:openclaw-gateway"
+    env_file: *openclaw-site
     environment: *openclaw-env
     volumes: *openclaw-volumes
     entrypoint: ["node", "dist/index.js"]

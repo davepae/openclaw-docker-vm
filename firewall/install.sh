@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
 # Phase 1 — install the gateway egress firewall and create the gateway network.
 # Run on the VM from the repo root:  sudo ./firewall/install.sh
-# Safe to re-run; edit firewall/firewall.conf and re-run to change the allowlist.
+# Safe to re-run. The allowlist comes from site.env (./configure.sh); after
+# changing a server address there, re-run this script.
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run with sudo: sudo $0"; exit 1; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(dirname "$HERE")"
+[[ -f "$REPO/site.env" ]] || { echo "site.env missing. Run ./configure.sh first."; exit 1; }
+
+# Resolve the site's servers to ip:port pairs now; nothing is changed if this fails.
+echo "==> Deriving the gateway allowlist from site.env"
+SITE_VARS="$(python3 "$REPO/scripts/site_settings.py" firewall-vars)"
+printf '%s\n' "$SITE_VARS" | sed 's/^/    /'
 
 echo "==> Installing config, script and systemd unit"
 install -d -m 0755 /etc/openclaw
-install -m 0644 "$HERE/firewall.conf" /etc/openclaw/firewall.conf
+{ cat "$HERE/firewall.conf"; echo; echo "# --- From site.env, written by firewall/install.sh ---"; printf '%s\n' "$SITE_VARS"; } \
+  > /etc/openclaw/firewall.conf.new
+chmod 0644 /etc/openclaw/firewall.conf.new
+mv -f /etc/openclaw/firewall.conf.new /etc/openclaw/firewall.conf
 install -m 0755 "$HERE/oc-firewall.sh" /usr/local/sbin/oc-firewall.sh
 install -m 0644 "$HERE/openclaw-firewall.service" /etc/systemd/system/openclaw-firewall.service
 systemctl daemon-reload

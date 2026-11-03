@@ -11,6 +11,13 @@ CONF="${1:-/etc/openclaw/firewall.conf}"
 # shellcheck source=/dev/null
 source "$CONF"
 
+# DNS_IP (one or more addresses) and ALLOW_TCP (ip:port pairs) are written into
+# the config from site.env by firewall/install.sh. Refuse to run without them.
+if [[ -z "${DNS_IP:-}" || -z "${ALLOW_TCP:-}" ]]; then
+  echo "DNS_IP or ALLOW_TCP missing from $CONF. Re-run: sudo ./firewall/install.sh" >&2
+  exit 1
+fi
+
 if ! iptables -n -L DOCKER-USER >/dev/null 2>&1; then
   echo "DOCKER-USER chain not found. Is Docker running with its iptables backend?" >&2
   exit 1
@@ -20,8 +27,10 @@ iptables -N OC-GW 2>/dev/null || true
 iptables -F OC-GW
 
 iptables -A OC-GW -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-for proto in udp tcp; do
-  iptables -A OC-GW -d "$DNS_IP" -p "$proto" --dport 53 -j RETURN
+for dns in $DNS_IP; do
+  for proto in udp tcp; do
+    iptables -A OC-GW -d "$dns" -p "$proto" --dport 53 -j RETURN
+  done
 done
 for pair in $ALLOW_TCP; do
   iptables -A OC-GW -d "${pair%:*}" -p tcp --dport "${pair##*:}" -j RETURN
@@ -40,8 +49,10 @@ if [[ -n "${OC_EGRESS_BRIDGE:-}" ]]; then
   iptables -N OC-EGRESS 2>/dev/null || true
   iptables -F OC-EGRESS
   iptables -A OC-EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-  for proto in udp tcp; do
-    iptables -A OC-EGRESS -d "$DNS_IP" -p "$proto" --dport 53 -j RETURN
+  for dns in $DNS_IP; do
+    for proto in udp tcp; do
+      iptables -A OC-EGRESS -d "$dns" -p "$proto" --dport 53 -j RETURN
+    done
   done
   for net in $PRIVATE_RANGES; do
     iptables -A OC-EGRESS -d "$net" -m limit --limit 6/min -j LOG --log-prefix "OC-EGRESS-DROP: "

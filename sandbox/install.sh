@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Phase 3 — build the agent sandbox image, install the web plugins, and turn
-# sandboxing on. Run on the VM as ocadmin from the repo:  ./sandbox/install.sh
+# sandboxing on. Run on the VM as the admin user from the repo:  ./sandbox/install.sh
 # Safe to re-run.
 set -Eeuo pipefail  # -E: the ERR trap also fires inside functions
 cd "$(dirname "$0")/.."
@@ -9,7 +9,7 @@ REPO="$(pwd)"
 SANDBOX_IMAGE="openclaw-sandbox-local:2"   # must match agents.defaults.sandbox.docker.image
 log() { printf '\n==> %s\n' "$*"; }
 
-[[ $EUID -ne 0 ]] || { echo "Run as ocadmin, not with sudo."; exit 1; }
+[[ $EUID -ne 0 ]] || { echo "Run as your admin user, not with sudo."; exit 1; }
 [[ -f compose/.env ]] || { echo "Run ./compose/install.sh (Phase 2) first."; exit 1; }
 VERSION="$(sed -n "s/^OPENCLAW_VERSION=//p" compose/.env | tail -1 | tr -d "'")"
 GW_IMAGE="openclaw-gateway-local:${VERSION}"
@@ -87,7 +87,7 @@ echo "    smoke test passed"
 # --- 2. Web plugins (searxng, firecrawl) ------------------------------------------
 # The gateway has no internet, so the packages are fetched by a one-shot
 # container on Docker's default network and installed into /srv/openclaw/state.
-# It uses a throwaway config (the real one is read-only); config/openclaw.json5
+# It uses a throwaway config (the real one is read-only); config/openclaw.template.json5
 # already enables both plugins. The throwaway config lives in a directory node
 # owns, because OpenClaw chmods its config directory (root-owned /tmp fails). The gateway must be stopped: the install needs
 # the state lock.

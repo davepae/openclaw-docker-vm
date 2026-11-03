@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Phase 3b — give sandboxes HTTPS access to package registries through the
-# Squid proxy, and nothing else. Run on the VM as ocadmin:
+# Squid proxy, and nothing else. Run on the VM as the admin user:
 #   ./sandbox/egress-install.sh
 # Safe to re-run. To revert: set sandbox docker.network back to "none" in
-# config/openclaw.json5, then re-run ./compose/install.sh.
+# config/openclaw.template.json5, then re-run ./compose/install.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 log() { printf '\n==> %s\n' "$*"; }
-[[ $EUID -ne 0 ]] || { echo "Run as ocadmin, not with sudo."; exit 1; }
+[[ $EUID -ne 0 ]] || { echo "Run as your admin user, not with sudo."; exit 1; }
 
 log "Firewall: OC-EGRESS chain and the oc-sbx (internal) / oc-egress networks"
 sudo ./firewall/install.sh

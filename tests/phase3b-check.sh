@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Phase 3b exit check: sandboxes reach allowlisted registries through the
-# proxy, and nothing else. Run on the VM as ocadmin:  ./tests/phase3b-check.sh
+# proxy, and nothing else. Run on the VM as the admin user:  ./tests/phase3b-check.sh
 set -uo pipefail
+# shellcheck source=tests/lib-site.sh
+source "$(cd "$(dirname "$0")" && pwd)/lib-site.sh"
 cd "$(dirname "$0")/../compose" || exit 1
 
 PROXY=oc-proxy
@@ -20,8 +22,16 @@ check "proxy running"                       test "$(docker inspect -f '{{.State.
 check "proxy runs as non-root"              test "$(docker exec $PROXY id -u)" != "0"
 check "proxy has a read-only root"          test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' $PROXY)" = "true"
 check "proxy listens on 3128"               docker exec $PROXY bash -c '</dev/tcp/127.0.0.1/3128'
-check "proxy cannot reach the LAN (Strata)" bash -c "! docker exec $PROXY timeout 4 bash -c '</dev/tcp/172.16.1.67/8080' 2>/dev/null"
-check "proxy cannot reach the DMZ (intelnuc6)" bash -c "! docker exec $PROXY timeout 4 bash -c '</dev/tcp/172.16.3.100/8080' 2>/dev/null"
+# OC-EGRESS drops private destinations; a service on a public address is
+# reachable by design (e.g. an https:// Firecrawl), so those are skipped.
+for svc in "model server:${LLM_IP}:${LLM_PORT}" "SearXNG host:${SEARX_IP}:${SEARX_PORT}"; do
+  name="${svc%%:*}"; rest="${svc#*:}"; ip="${rest%%:*}"; port="${rest##*:}"
+  if is_private "$ip"; then
+    check "proxy cannot reach the ${name} (${ip}:${port})" bash -c "! docker exec $PROXY timeout 4 bash -c '</dev/tcp/${ip}/${port}' 2>/dev/null"
+  else
+    echo "SKIP  ${name} is on a public address (${ip}); not a LAN reachability test"; ((skip++))
+  fi
+done
 
 echo "-- live sandbox"
 # OpenClaw names its sandbox containers openclaw-sbx-*; match by name, not image,
@@ -40,7 +50,7 @@ else
   check "registry.npmjs.org allowed via proxy" test "$(via_proxy https://registry.npmjs.org/)" = "200"
   check "example.com denied by proxy"        test "$(via_proxy https://example.com/)" = "403"
   check "api.github.com denied by proxy"     test "$(via_proxy https://api.github.com/)" = "403"
-  check "LAN (Strata) denied by proxy"       test "$(via_proxy https://172.16.1.67/)" = "403"
+  check "model server address denied by proxy" test "$(via_proxy "https://${LLM_IP}/")" = "403"
   check "no direct internet (proxy bypassed)" bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 https://pypi.org/' >/dev/null 2>&1"
   check "pip can download a package"         run 'pip download --no-deps --no-cache-dir -q -d /tmp/pipcheck six && ls /tmp/pipcheck | grep -q six'
   check "npm can query the registry"         run 'npm view left-pad version'
