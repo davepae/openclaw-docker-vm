@@ -77,6 +77,10 @@
     exec: { host: "sandbox" },
     // No escape hatch out of the sandbox.
     elevated: { enabled: false },
+    // Sandboxed sessions only get a default tool allowlist, which omits web
+    // tools. These two run on the gateway (which can reach SearXNG and
+    // Firecrawl), not in the sandbox, so the sandbox itself stays offline.
+    sandbox: { tools: { alsoAllow: ["web_search", "web_fetch"] } },
     web: {
       // Search through SearXNG on intelnuc6.
       search: { provider: "searxng", maxResults: 8, timeoutSeconds: 30 },
