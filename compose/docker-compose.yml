@@ -11,8 +11,9 @@ x-openclaw-env: &openclaw-env
   OPENCLAW_STATE_DIR: /srv/openclaw/state
   OPENCLAW_CONFIG_DIR: /srv/openclaw/state
   OPENCLAW_WORKSPACE_DIR: /srv/openclaw/workspace
-  # Config comes from the repo, read-only.
-  OPENCLAW_CONFIG_PATH: /run/config/openclaw.json
+  # Config comes from the repo, read-only. The whole config/ directory is
+  # mounted (not the single file) so a git pull is seen after a restart.
+  OPENCLAW_CONFIG_PATH: /run/config/openclaw.json5
   OPENCLAW_CONFIG_READONLY: "1"
   OPENCLAW_GATEWAY_PORT: "18789"
   OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?run install.sh first}
@@ -23,7 +24,7 @@ x-openclaw-env: &openclaw-env
 
 x-openclaw-volumes: &openclaw-volumes
   - /srv/openclaw:/srv/openclaw
-  - ../config/openclaw.json5:/run/config/openclaw.json:ro
+  - ../config:/run/config:ro
   - /srv/openclaw/auth-secrets:/home/node/.config/openclaw
 
 services:
@@ -38,7 +39,7 @@ services:
     environment: *openclaw-env
     volumes:
       - /srv/openclaw:/srv/openclaw
-      - ../config/openclaw.json5:/run/config/openclaw.json:ro
+      - ../config:/run/config:ro
       - /srv/openclaw/auth-secrets:/home/node/.config/openclaw
       # Lets the gateway start sibling sandbox containers. This is root-equivalent
       # on the VM, which is why the VM is the trust boundary.
