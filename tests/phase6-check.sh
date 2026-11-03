@@ -26,8 +26,11 @@ errs="$(docker logs --since "$started" $GW 2>&1 | grep -i -E 'EROFS|read-only fi
 if [[ -z "$errs" ]]; then ok "no read-only filesystem errors since start"; else bad "read-only filesystem errors in logs:"; echo "$errs" | sed 's/^/        /'; fi
 
 echo "-- plugins"
-loaded="$(docker exec $GW openclaw plugins list 2>/dev/null | grep -E '│ enabled' | awk -F'│' '{gsub(/ /,"",$3); print $3}' | sort | tr '\n' ' ')"
-if [[ "$loaded" == "device-pair firecrawl memory-core searxng " ]]; then ok "only the 4 allowlisted plugins enabled"; else bad "enabled plugins: ${loaded:-none}"; fi
+# The gateway logs the plugins it actually loaded at startup. (`plugins list`
+# shows the plugin registry, which marks bundled plugins enabled by default
+# whether or not the gateway loads them.)
+loaded="$(docker logs --since "$started" $GW 2>&1 | grep -o 'http server listening ([0-9]* plugins: [^;]*' | tail -1 | sed 's/.*plugins: //')"
+if [[ "$loaded" == "device-pair, firecrawl, memory-core, searxng" ]]; then ok "gateway loaded only the 4 allowlisted plugins"; else bad "gateway loaded: ${loaded:-unknown}"; fi
 check "plugins doctor passes"                   docker exec $GW openclaw plugins doctor
 
 echo "-- backups"

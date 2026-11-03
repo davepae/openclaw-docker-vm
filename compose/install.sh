@@ -68,6 +68,11 @@ if [[ "$(docker inspect -f '{{.State.Running}}' openclaw-gateway 2>/dev/null)" =
   trap 'echo "!! Failed; starting the previous gateway again"; docker compose start openclaw-gateway || true' ERR
 fi
 
+# OpenClaw's startup self-check wants its config at mode 600 and otherwise
+# tries to chmod it, which fails on the read-only mount (EROFS in the logs).
+# Git tracks only the executable bit, so this never shows as a change.
+chmod 600 ../config/openclaw.json5 ../config/exec-approvals.json
+
 log "Validating config/openclaw.json5"
 oneshot config validate
 
