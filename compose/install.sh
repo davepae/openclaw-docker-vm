@@ -2,7 +2,7 @@
 # Phase 2 — build and start the OpenClaw gateway container.
 # Run on the VM as ocadmin, from anywhere in the repo:  ./compose/install.sh
 # Safe to re-run (it keeps the existing token and key in compose/.env).
-set -euo pipefail
+set -Eeuo pipefail  # -E: the ERR trap also fires inside functions
 cd "$(dirname "$0")"
 
 [[ $EUID -ne 0 ]] || { echo "Run as ocadmin, not with sudo."; exit 1; }
@@ -64,6 +64,8 @@ oneshot() { docker compose run --rm --no-deps -T --entrypoint node openclaw-gate
 if [[ "$(docker inspect -f '{{.State.Running}}' openclaw-gateway 2>/dev/null)" == "true" ]]; then
   log "Stopping the running gateway"
   docker compose stop openclaw-gateway
+  # If validation or approvals fail, don't leave the gateway down.
+  trap 'echo "!! Failed; starting the previous gateway again"; docker compose start openclaw-gateway || true' ERR
 fi
 
 log "Validating config/openclaw.json5"
@@ -72,6 +74,7 @@ oneshot config validate
 log "Writing the exec approvals policy (host exec: deny)"
 oneshot approvals set --stdin < ../config/exec-approvals.json >/dev/null
 
+trap - ERR
 log "Starting the gateway"
 docker compose up -d --force-recreate openclaw-gateway
 

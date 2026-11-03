@@ -2,7 +2,7 @@
 # Phase 3 — build the agent sandbox image, install the web plugins, and turn
 # sandboxing on. Run on the VM as ocadmin from the repo:  ./sandbox/install.sh
 # Safe to re-run.
-set -euo pipefail
+set -Eeuo pipefail  # -E: the ERR trap also fires inside functions
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
 
@@ -75,25 +75,42 @@ echo "    smoke test passed"
 if [[ "$(docker inspect -f '{{.State.Running}}' openclaw-gateway 2>/dev/null)" == "true" ]]; then
   log "Stopping the gateway for the plugin install"
   (cd compose && docker compose stop openclaw-gateway)
+  # If anything below fails, don't leave the gateway down.
+  trap 'echo "!! Failed; starting the gateway again"; (cd "$REPO/compose" && docker compose start openclaw-gateway) || true' ERR
 fi
 
-log "Installing @openclaw/searxng-plugin and @openclaw/firecrawl-plugin ${VERSION}"
-docker run --rm --network bridge \
-  --cap-drop ALL --security-opt no-new-privileges \
-  -e HOME=/home/node -e OPENCLAW_HOME=/home/node \
-  -e OPENCLAW_STATE_DIR=/srv/openclaw/state \
-  -e OPENCLAW_CONFIG_PATH=/home/node/plugin-install/openclaw.json \
-  -v /srv/openclaw:/srv/openclaw \
-  --entrypoint node "$GW_IMAGE" dist/index.js plugins install "@openclaw/searxng-plugin@${VERSION}"
-docker run --rm --network bridge \
-  --cap-drop ALL --security-opt no-new-privileges \
-  -e HOME=/home/node -e OPENCLAW_HOME=/home/node \
-  -e OPENCLAW_STATE_DIR=/srv/openclaw/state \
-  -e OPENCLAW_CONFIG_PATH=/home/node/plugin-install/openclaw.json \
-  -v /srv/openclaw:/srv/openclaw \
-  --entrypoint node "$GW_IMAGE" dist/index.js plugins install "@openclaw/firecrawl-plugin@${VERSION}"
+# Version of a plugin already installed in the state dir, or empty.
+installed_version() {  # npm package name, e.g. @openclaw/searxng-plugin
+  local pj
+  pj="$(ls -d /srv/openclaw/state/npm/projects/*/node_modules/"$1"/package.json 2>/dev/null | head -1 || true)"
+  [[ -n "$pj" ]] || return 0
+  python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("version", ""))' "$pj"
+}
+
+install_plugin() {  # npm package name
+  local pkg="$1" have force=()
+  have="$(installed_version "$pkg")"
+  if [[ "$have" == "$VERSION" ]]; then
+    echo "    ${pkg} ${VERSION} already installed"
+    return
+  fi
+  # Replacing an installed plugin (an upgrade) requires --force.
+  [[ -z "$have" ]] || { echo "    upgrading ${pkg} ${have} -> ${VERSION}"; force=(--force); }
+  docker run --rm --network bridge \
+    --cap-drop ALL --security-opt no-new-privileges \
+    -e HOME=/home/node -e OPENCLAW_HOME=/home/node \
+    -e OPENCLAW_STATE_DIR=/srv/openclaw/state \
+    -e OPENCLAW_CONFIG_PATH=/home/node/plugin-install/openclaw.json \
+    -v /srv/openclaw:/srv/openclaw \
+    --entrypoint node "$GW_IMAGE" dist/index.js plugins install "${force[@]}" "${pkg}@${VERSION}"
+}
+
+log "Installing the web plugins (${VERSION})"
+install_plugin @openclaw/searxng-plugin
+install_plugin @openclaw/firecrawl-plugin
 
 # --- 3. Validate config, set approvals, restart ----------------------------------------
+trap - ERR   # compose/install.sh has its own recovery
 log "Handing off to compose/install.sh (validate, approvals, restart)"
 "$REPO/compose/install.sh"
 

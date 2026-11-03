@@ -33,9 +33,11 @@ fi
 # --- Base packages and automatic security updates ---------------------------
 log "Updating packages"
 export DEBIAN_FRONTEND=noninteractive
+# Keep existing config files on upgrade instead of stopping to ask.
+APT_KEEP_CONF=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 apt-get update
-apt-get -y upgrade
-apt-get -y install ca-certificates curl unattended-upgrades qemu-guest-agent
+apt-get -y "${APT_KEEP_CONF[@]}" upgrade
+apt-get -y "${APT_KEEP_CONF[@]}" install ca-certificates curl unattended-upgrades qemu-guest-agent
 
 log "Enabling unattended security upgrades"
 cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
@@ -82,7 +84,7 @@ EOF
 apt-get update
 
 log "Installing Docker Engine and Compose"
-apt-get -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+apt-get -y "${APT_KEEP_CONF[@]}" install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 log "Configuring the Docker daemon (log rotation, live restore)"
 if [[ -f /etc/docker/daemon.json ]] && ! grep -q '"live-restore"' /etc/docker/daemon.json; then
