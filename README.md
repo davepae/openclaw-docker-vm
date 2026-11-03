@@ -76,8 +76,9 @@ HTTPS.
 
 ## What the agent gets
 
-- **Model:** a local OpenAI-compatible server (here Strata serving
-  `qwen3.8-flash-next-iq2_xs` on `llm.paelab.com`).
+- **Model:** a local OpenAI-compatible server (in the reference build: Strata
+  serving `qwen3.8-flash-next-iq2_xs` on a LAN host; point
+  `config/openclaw.json5` at your own server).
 - **Web:** `web_search` through SearXNG and `web_fetch` through Firecrawl. Both
   run on the gateway, so the sandbox itself stays without internet.
 - **Sandbox toolchains:** Python 3.13 with PDF libraries (pypdf, pdfplumber,
@@ -157,7 +158,8 @@ The values specific to this lab live in four places:
 From the admin machine, open a tunnel and browse to the Control UI:
 
 ```bash
-ssh -N -L 18789:127.0.0.1:18789 ocadmin@openclaw.paelab.com
+VM=192.168.1.50        # your VM's IP address or hostname, e.g. openclaw.example.lan
+ssh -N -L 18789:127.0.0.1:18789 ocadmin@$VM
 # then open http://127.0.0.1:18789/ and paste the token:
 #   grep OPENCLAW_GATEWAY_TOKEN ~/openclaw-docker-vm/compose/.env
 ```
@@ -177,7 +179,8 @@ workspace. To get the agent's files out, pull them from your own machine, for
 example from a folder the agent writes to:
 
 ```bash
-rsync -av ocadmin@openclaw.paelab.com:/srv/openclaw/workspace/outbox/ ~/OpenClaw-outbox/
+VM=192.168.1.50        # your VM's IP address or hostname, as above
+rsync -av ocadmin@$VM:/srv/openclaw/workspace/outbox/ ~/OpenClaw-outbox/
 ```
 
 Pulling keeps the VM inbound-only, and the agent never writes to a share that
