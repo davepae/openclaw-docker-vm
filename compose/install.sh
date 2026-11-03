@@ -86,7 +86,7 @@ echo " ${status:-unknown}"
 
 cat <<'EOF'
 
-Phase 2 gateway is running.
+OpenClaw gateway is running.
 
 1. From the MacBook, open the tunnel (leave it running):
      ssh -N -L 18789:127.0.0.1:18789 ocadmin@openclaw.paelab.com
@@ -95,5 +95,5 @@ Phase 2 gateway is running.
 3. If the UI says "pairing required", approve the browser on the VM:
      docker exec -it openclaw-gateway openclaw devices list
      docker exec -it openclaw-gateway openclaw devices approve <requestId>
-4. Then run ./tests/phase2-check.sh
+4. Then run the check for the phase you are on, e.g. ./tests/phase3-check.sh
 EOF
