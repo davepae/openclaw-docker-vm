@@ -6,7 +6,7 @@ Docker, every agent session runs its tools in a locked-down Docker sandbox, and
 the whole stack uses local services only: models from a local inference server,
 web search and page fetching from self-hosted SearXNG and Firecrawl.
 
-One command builds the VM, and 69 automated checks verify it.
+One command builds the VM, and 72 automated checks verify it.
 
 ## Security model
 
@@ -26,6 +26,53 @@ does not need.
 | Sandbox network (`oc-sbx`) | Docker internal network; its only exit is a Squid proxy allowing HTTPS to an allowlist of package registries (PyPI, npm, Go modules, crates.io). No LAN, no TLS interception. |
 | Proxy egress (`oc-egress`) | `OC-EGRESS` chain: DNS plus 80/443 to public addresses only. |
 | Backups | Nightly verified `openclaw backup create` archives (mode 600, 14 days), plus a Proxmox backup job off the host. |
+
+## Threat model and residual risks
+
+**Bottom line:** this build is strong against classic container attacks
+(breakout, privilege escalation, pivoting into the LAN) and weaker against
+AI-native ones: instructions hidden in web content, data leaving through the
+agent's own tools, and a poisoned workspace steering later sessions.
+
+**Treat as root on the VM:** the gateway container (it holds the Docker
+socket), the gateway token, and anyone who can SSH to the VM.
+
+| Risk | How it would happen | What limits it | What remains |
+| --- | --- | --- | --- |
+| Gateway takeover | Hostile content (a web page, model output) triggers a bug in OpenClaw | Gateway exec denied, elevated off, read-only root, 4 plugins, no internet | Critical if it happens: the socket is VM root. Patch promptly. |
+| Exfiltration via web tools | Injected instructions make the agent `web_fetch` a URL that carries data | Nothing technical; it is inherent to web access | Open by design |
+| Exfiltration via package registries | `npm publish`, or a Go module path naming an attacker's host | Proxy allows only 4 registries, HTTPS only | Reduced, not closed: the proxy cannot see inside TLS |
+| Workspace and session poisoning | The agent rewrites code, or its own instruction and identity files, which load into every session | The sandbox can write only the workspace; the OpenClaw config is read-only | Review agent-written code before running it elsewhere |
+| Secrets in the workspace | Keys or tokens copied into `/srv/openclaw/workspace` | Nothing; the agent reads all of it | Never put secrets there |
+| Sandbox escape | A kernel or container runtime exploit | Non-root, no capabilities, no-new-privileges, read-only root, patched host | Low likelihood, critical impact |
+| Stolen gateway token | Read from the VM or its backups | Loopback only, SSH tunnel; `.env` and backups are mode 600 | The token is equivalent to VM root |
+| Poisoned search or fetch results | intelnuc6 is compromised | The same limits as prompt injection | Treat web content as hostile |
+
+The agent has all three ingredients of the classic AI data-leak pattern:
+access to private data (the workspace), exposure to untrusted content (the
+web), and a way to send data out (the web tools). That is deliberate; the
+controls above limit the damage rather than remove the pattern.
+
+Verified closed by the checks: direct internet and LAN access from the
+sandbox and the gateway, DNS from the sandbox, the sandbox reaching the
+gateway, and the proxy reaching the LAN or DMZ.
+
+**Using it safely**
+
+- Keep SSH keys, passwords and tokens out of the workspace.
+- Review code the agent wrote before running it outside the sandbox.
+- For sensitive work, cut sandbox egress (`network: "none"`) and remove
+  `web_fetch` and `web_search` from `tools.sandbox.tools.alsoAllow`.
+- Upgrade OpenClaw regularly. Pinning by digest means security fixes only
+  arrive when you upgrade.
+- If you suspect compromise, roll back to a Proxmox snapshot and rotate the
+  gateway token and the model server's API key.
+
+**Known gaps:** a Docker socket proxy was considered and rejected, because the
+API calls needed to create sandboxes are the same ones that can start a
+privileged container. Rootless Docker would genuinely shrink the socket risk,
+but needs the network controls reworked. The egress proxy cannot see inside
+HTTPS.
 
 ## What the agent gets
 
@@ -168,7 +215,7 @@ docker exec openclaw-gateway openclaw backup restore \
 | --- | --- | --- |
 | `tests/phase1-check.sh` | 7 | Gateway network reaches only its allowlist; firewall survives restarts |
 | `tests/phase2-check.sh` | 12 | Exposure, container identity, read-only config, exec policy |
-| `tests/phase3-check.sh` | 21 | Sandbox config, plugins, and the live sandbox's isolation and tools |
+| `tests/phase3-check.sh` | 24 | Sandbox config, plugins, and the live sandbox's isolation, DNS and tools |
 | `tests/phase3b-check.sh` | 18 | Proxy isolation and the allow/deny behavior seen from the sandbox |
 | `tests/phase6-check.sh` | 11 | Read-only gateway root, loaded plugins, backups |
 

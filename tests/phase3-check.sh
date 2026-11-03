@@ -47,10 +47,14 @@ else
   check "runs as 1000:1000"          test "$(insp '{{.Config.User}}')" = "1000:1000"
   check "all capabilities dropped"   grep -qi all <<<"$(insp '{{.HostConfig.CapDrop}}')"
   check "not privileged"             test "$(insp '{{.HostConfig.Privileged}}')" = "false"
+  check "no-new-privileges set"      grep -q 'no-new-privileges' <<<"$(insp '{{.HostConfig.SecurityOpt}}')"
   check "Docker socket not mounted"  bash -c "! docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' $sbx | grep -q docker.sock"
   check "workspace is /srv/openclaw/workspace" bash -c "docker inspect -f '{{range .Mounts}}{{.Source}}={{.Destination}} {{end}}' $sbx | grep -q '/srv/openclaw/workspace=/workspace'"
   check "internet unreachable from sandbox"    bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 https://example.com' >/dev/null 2>&1"
   check "LAN unreachable from sandbox"         bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 http://172.16.1.67:8080/' >/dev/null 2>&1"
+  gwip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' openclaw-gateway)"
+  check "gateway API unreachable from sandbox" bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 http://${gwip}:18789/healthz' >/dev/null 2>&1"
+  check "no DNS from sandbox (no DNS exfiltration channel)" bash -c "! docker exec $sbx getent hosts example.com >/dev/null 2>&1"
   check "Python PDF libs import"               docker exec "$sbx" sh -lc 'python3 -c "import pypdf, fitz, pdfplumber, reportlab"'
   check "Go, Rust and Node present"            docker exec "$sbx" sh -lc 'go version && cargo --version && node --version'
   check "workspace writable by the sandbox"    docker exec "$sbx" sh -lc 'touch /workspace/.phase3-write-test && rm /workspace/.phase3-write-test'
