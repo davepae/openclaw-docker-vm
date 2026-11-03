@@ -33,7 +33,9 @@ check "searxng plugin enabled"                grep -Eq 'searxng +│ openclaw +�
 check "firecrawl plugin enabled"              grep -Eq 'firecrawl +│ openclaw +│ enabled' <<<"$plugins"
 
 echo "-- live sandbox"
-sbx="$(docker ps --filter "ancestor=${IMG}" --format '{{.Names}}' | head -1)"
+# OpenClaw names its sandbox containers openclaw-sbx-*; match by name, not image,
+# so a container from an earlier build of the image is still found.
+sbx="$(docker ps --filter "name=^openclaw-sbx-" --format '{{.Names}}' | head -1)"
 if [[ -z "$sbx" ]]; then
   echo "SKIP  no running sandbox yet: ask the agent to run 'python3 --version' in the Control UI, then rerun"
   ((skip++))

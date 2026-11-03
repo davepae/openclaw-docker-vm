@@ -25,7 +25,9 @@ check "proxy cannot reach the LAN (Strata)" bash -c "! docker exec $PROXY timeou
 check "proxy cannot reach the DMZ (intelnuc6)" bash -c "! docker exec $PROXY timeout 4 bash -c '</dev/tcp/172.16.3.100/8080' 2>/dev/null"
 
 echo "-- live sandbox"
-sbx="$(docker ps --filter "ancestor=${IMG}" --format '{{.Names}}' | head -1)"
+# OpenClaw names its sandbox containers openclaw-sbx-*; match by name, not image,
+# so a container from an earlier build of the image is still found.
+sbx="$(docker ps --filter "name=^openclaw-sbx-" --format '{{.Names}}' | head -1)"
 if [[ -z "$sbx" ]]; then
   echo "SKIP  no running sandbox: ask the agent to run a command in a new chat, then rerun"
   ((skip++))
