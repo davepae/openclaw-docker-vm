@@ -111,11 +111,9 @@ install_plugin @openclaw/firecrawl-plugin
 
 # --- 3. Validate config, set approvals, restart ----------------------------------------
 trap - ERR   # compose/install.sh has its own recovery
-log "Handing off to compose/install.sh (validate, approvals, restart)"
+log "Handing off to compose/install.sh (validate, approvals, recreate sandboxes, restart)"
 "$REPO/compose/install.sh"
 
-log "Recreating any existing sandbox so it uses the current image and config"
-docker exec openclaw-gateway openclaw sandbox recreate --all --force >/dev/null 2>&1 || true
 
 cat <<'EOF'
 

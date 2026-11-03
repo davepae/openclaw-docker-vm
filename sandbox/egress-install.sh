@@ -26,8 +26,6 @@ echo " listening"
 log "Restarting the gateway with sandboxes on oc-sbx"
 ./compose/install.sh
 
-log "Recreating sandboxes so they join oc-sbx with the proxy settings"
-docker exec openclaw-gateway openclaw sandbox recreate --all --force >/dev/null 2>&1 || true
 
 cat <<'MSG'
 

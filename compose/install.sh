@@ -74,6 +74,14 @@ oneshot config validate
 log "Writing the exec approvals policy (host exec: deny)"
 oneshot approvals set --stdin < ../config/exec-approvals.json >/dev/null
 
+# Recreating sandboxes needs exclusive state ownership, so it runs here while
+# the gateway is stopped. OpenClaw starts fresh ones (current image + config)
+# on next use; the workspace is a host directory and is unaffected.
+if [[ -n "$(docker ps -aq --filter 'name=^openclaw-sbx-')" ]]; then
+  log "Recreating sandboxes so they pick up the current image and config"
+  oneshot sandbox recreate --all --force
+fi
+
 trap - ERR
 log "Starting the gateway"
 docker compose up -d --force-recreate openclaw-gateway
