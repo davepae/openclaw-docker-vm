@@ -69,7 +69,8 @@ echo "    smoke test passed"
 # The gateway has no internet, so the packages are fetched by a one-shot
 # container on Docker's default network and installed into /srv/openclaw/state.
 # It uses a throwaway config (the real one is read-only); config/openclaw.json5
-# already enables both plugins. The gateway must be stopped: the install needs
+# already enables both plugins. The throwaway config lives in a directory node
+# owns, because OpenClaw chmods its config directory (root-owned /tmp fails). The gateway must be stopped: the install needs
 # the state lock.
 if [[ "$(docker inspect -f '{{.State.Running}}' openclaw-gateway 2>/dev/null)" == "true" ]]; then
   log "Stopping the gateway for the plugin install"
@@ -81,14 +82,14 @@ docker run --rm --network bridge \
   --cap-drop ALL --security-opt no-new-privileges \
   -e HOME=/home/node -e OPENCLAW_HOME=/home/node \
   -e OPENCLAW_STATE_DIR=/srv/openclaw/state \
-  -e OPENCLAW_CONFIG_PATH=/tmp/plugin-install.json \
+  -e OPENCLAW_CONFIG_PATH=/home/node/plugin-install/openclaw.json \
   -v /srv/openclaw:/srv/openclaw \
   --entrypoint node "$GW_IMAGE" dist/index.js plugins install "@openclaw/searxng-plugin@${VERSION}"
 docker run --rm --network bridge \
   --cap-drop ALL --security-opt no-new-privileges \
   -e HOME=/home/node -e OPENCLAW_HOME=/home/node \
   -e OPENCLAW_STATE_DIR=/srv/openclaw/state \
-  -e OPENCLAW_CONFIG_PATH=/tmp/plugin-install.json \
+  -e OPENCLAW_CONFIG_PATH=/home/node/plugin-install/openclaw.json \
   -v /srv/openclaw:/srv/openclaw \
   --entrypoint node "$GW_IMAGE" dist/index.js plugins install "@openclaw/firecrawl-plugin@${VERSION}"
 
