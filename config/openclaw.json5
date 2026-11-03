@@ -55,7 +55,9 @@
         workspaceAccess: "rw",
         docker: {
           image: "openclaw-sandbox-local:1", // built by sandbox/build.sh
-          network: "none", // PoC: no network at all. Phase 3b: oc-sbx + proxy.
+          // Phase 3b: an internal network whose only exit is the Squid proxy
+          // (HTTPS to allowlisted package registries). Set "none" to cut it off.
+          network: "oc-sbx",
           user: "1000:1000", // matches /srv/openclaw/workspace ownership
           readOnlyRoot: true,
           tmpfs: ["/tmp", "/var/tmp", "/run"],
@@ -63,7 +65,15 @@
           memorySwap: "6g",
           cpus: 2,
           pidsLimit: 1024,
-          env: { LANG: "C.UTF-8" },
+          env: {
+            LANG: "C.UTF-8",
+            HTTPS_PROXY: "http://172.30.20.2:3128",
+            https_proxy: "http://172.30.20.2:3128",
+            HTTP_PROXY: "http://172.30.20.2:3128",
+            http_proxy: "http://172.30.20.2:3128",
+            NO_PROXY: "localhost,127.0.0.1",
+            no_proxy: "localhost,127.0.0.1",
+          },
         },
       },
     },

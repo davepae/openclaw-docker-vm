@@ -34,3 +34,23 @@ iptables -C DOCKER-USER -i "$OC_GW_BRIDGE" -j OC-GW 2>/dev/null \
   || iptables -I DOCKER-USER 1 -i "$OC_GW_BRIDGE" -j OC-GW
 
 echo "OC-GW rules applied for ${OC_GW_BRIDGE} (${OC_GW_SUBNET})."
+
+# --- Phase 3b: the egress proxy's outbound network ------------------------------
+if [[ -n "${OC_EGRESS_BRIDGE:-}" ]]; then
+  iptables -N OC-EGRESS 2>/dev/null || true
+  iptables -F OC-EGRESS
+  iptables -A OC-EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+  for proto in udp tcp; do
+    iptables -A OC-EGRESS -d "$DNS_IP" -p "$proto" --dport 53 -j RETURN
+  done
+  for net in $PRIVATE_RANGES; do
+    iptables -A OC-EGRESS -d "$net" -m limit --limit 6/min -j LOG --log-prefix "OC-EGRESS-DROP: "
+    iptables -A OC-EGRESS -d "$net" -j DROP
+  done
+  iptables -A OC-EGRESS -p tcp -m multiport --dports 80,443 -j RETURN
+  iptables -A OC-EGRESS -m limit --limit 6/min -j LOG --log-prefix "OC-EGRESS-DROP: "
+  iptables -A OC-EGRESS -j DROP
+  iptables -C DOCKER-USER -i "$OC_EGRESS_BRIDGE" -j OC-EGRESS 2>/dev/null \
+    || iptables -I DOCKER-USER 1 -i "$OC_EGRESS_BRIDGE" -j OC-EGRESS
+  echo "OC-EGRESS rules applied for ${OC_EGRESS_BRIDGE} (${OC_EGRESS_SUBNET})."
+fi

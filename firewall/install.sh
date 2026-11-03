@@ -19,17 +19,28 @@ systemctl restart openclaw-firewall.service
 # shellcheck source=/dev/null
 source /etc/openclaw/firewall.conf
 
-echo "==> Creating Docker network ${OC_GW_NETWORK} (${OC_GW_SUBNET}, bridge ${OC_GW_BRIDGE})"
-if docker network inspect "$OC_GW_NETWORK" >/dev/null 2>&1; then
-  current="$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "$OC_GW_NETWORK")"
-  [[ "$current" == "$OC_GW_SUBNET" ]] || { echo "${OC_GW_NETWORK} exists with subnet ${current}; remove it first."; exit 1; }
-  echo "    already exists"
-else
-  docker network create --driver bridge --subnet "$OC_GW_SUBNET" \
-    -o com.docker.network.bridge.name="$OC_GW_BRIDGE" "$OC_GW_NETWORK"
+# Create a bridge network with a fixed subnet and bridge name (idempotent).
+make_net() {  # name subnet bridge [extra docker network create args...]
+  local name="$1" subnet="$2" bridge="$3"; shift 3
+  echo "==> Docker network ${name} (${subnet}, bridge ${bridge}${*:+, $*})"
+  if docker network inspect "$name" >/dev/null 2>&1; then
+    local current; current="$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "$name")"
+    [[ "$current" == "$subnet" ]] || { echo "${name} exists with subnet ${current}; remove it first."; exit 1; }
+    echo "    already exists"
+  else
+    docker network create --driver bridge --subnet "$subnet" \
+      -o com.docker.network.bridge.name="$bridge" "$@" "$name"
+  fi
+}
+
+make_net "$OC_GW_NETWORK" "$OC_GW_SUBNET" "$OC_GW_BRIDGE"
+if [[ -n "${OC_SBX_NETWORK:-}" ]]; then
+  make_net "$OC_SBX_NETWORK" "$OC_SBX_SUBNET" "$OC_SBX_BRIDGE" --internal
+  make_net "$OC_EGRESS_NETWORK" "$OC_EGRESS_SUBNET" "$OC_EGRESS_BRIDGE"
 fi
 
 echo
 iptables -n -v -L OC-GW
+[[ -z "${OC_EGRESS_BRIDGE:-}" ]] || { echo; iptables -n -v -L OC-EGRESS; }
 echo
 echo "Phase 1 installed. Run ./tests/phase1-check.sh to verify."

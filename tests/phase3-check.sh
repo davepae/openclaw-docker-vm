@@ -40,15 +40,15 @@ if [[ -z "$sbx" ]]; then
 else
   echo "      inspecting ${sbx}"
   insp() { docker inspect -f "$1" "$sbx"; }
-  check "no network"                 test "$(insp '{{.HostConfig.NetworkMode}}')" = "none"
+  check "network is none or oc-sbx (proxy only)" grep -Eqx 'none|oc-sbx' <<<"$(insp '{{.HostConfig.NetworkMode}}')"
   check "read-only root filesystem"  test "$(insp '{{.HostConfig.ReadonlyRootfs}}')" = "true"
   check "runs as 1000:1000"          test "$(insp '{{.Config.User}}')" = "1000:1000"
   check "all capabilities dropped"   grep -qi all <<<"$(insp '{{.HostConfig.CapDrop}}')"
   check "not privileged"             test "$(insp '{{.HostConfig.Privileged}}')" = "false"
   check "Docker socket not mounted"  bash -c "! docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' $sbx | grep -q docker.sock"
   check "workspace is /srv/openclaw/workspace" bash -c "docker inspect -f '{{range .Mounts}}{{.Source}}={{.Destination}} {{end}}' $sbx | grep -q '/srv/openclaw/workspace=/workspace'"
-  check "internet unreachable from sandbox"    bash -c "! docker exec $sbx sh -lc 'curl -s -m 4 https://example.com' >/dev/null 2>&1"
-  check "LAN unreachable from sandbox"         bash -c "! docker exec $sbx sh -lc 'curl -s -m 4 http://172.16.1.67:8080/' >/dev/null 2>&1"
+  check "internet unreachable from sandbox"    bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 https://example.com' >/dev/null 2>&1"
+  check "LAN unreachable from sandbox"         bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 http://172.16.1.67:8080/' >/dev/null 2>&1"
   check "Python PDF libs import"               docker exec "$sbx" sh -lc 'python3 -c "import pypdf, fitz, pdfplumber, reportlab"'
   check "Go, Rust and Node present"            docker exec "$sbx" sh -lc 'go version && cargo --version && node --version'
   check "workspace writable by the sandbox"    docker exec "$sbx" sh -lc 'touch /workspace/.phase3-write-test && rm /workspace/.phase3-write-test'

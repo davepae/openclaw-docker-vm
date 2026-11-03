@@ -1,0 +1,24 @@
+# Domains sandboxes may reach over HTTPS through the proxy. Exact names only:
+# a leading dot would also allow every subdomain. One per line.
+# Reload after editing:  cd compose && docker compose restart oc-proxy
+
+# Python (pip)
+pypi.org
+files.pythonhosted.org
+
+# Node (npm, pnpm)
+registry.npmjs.org
+
+# Go modules
+proxy.golang.org
+sum.golang.org
+
+# Rust (cargo)
+index.crates.io
+static.crates.io
+
+# GitHub is left out on purpose: access to clone is also access to push,
+# which is an easy way to send data out. To allow it, uncomment:
+# github.com
+# codeload.github.com
+# objects.githubusercontent.com

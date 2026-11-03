@@ -90,6 +90,40 @@ services:
     stdin_open: true
     tty: true
 
+  # Phase 3b: the sandboxes' only way out. HTTPS to allowlisted domains only.
+  oc-proxy:
+    build:
+      context: ./proxy
+    image: openclaw-proxy-local:1
+    container_name: oc-proxy
+    volumes:
+      - ./proxy:/etc/squid/oc:ro    # squid.conf + allowlist.txt
+    networks:
+      oc-sbx:
+        ipv4_address: 172.30.20.2   # sandboxes use http://172.30.20.2:3128
+      oc-egress: {}
+    read_only: true
+    tmpfs:
+      - /run/squid:uid=13,gid=13,mode=0755
+      - /tmp
+      - /var/spool/squid:uid=13,gid=13
+      - /var/log/squid:uid=13,gid=13
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+
 networks:
   oc-gw:
     external: true  # created by firewall/install.sh, with the DOCKER-USER allowlist
+  oc-sbx:
+    external: true  # internal: no route out; created by firewall/install.sh
+  oc-egress:
+    external: true  # OC-EGRESS: DNS + 80/443 to public addresses only

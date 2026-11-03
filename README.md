@@ -15,8 +15,8 @@ that runs on the gateway is effectively root on the VM.
 | 0 | VM base hardening and Docker Engine (`vm/harden.sh`) | done |
 | 1 | Network policy (`firewall/`) | done |
 | 2 | Gateway stack (`compose/`, `config/`) | done |
-| 3 | Sandbox image, policy, web tools (`sandbox/`, `config/`) | ready |
-| 3b | Sandbox egress proxy | after PoC |
+| 3 | Sandbox image, policy, web tools (`sandbox/`, `config/`) | done |
+| 3b | Sandbox egress proxy (`compose/proxy/`) | ready |
 | 4 | Access via SSH tunnel | |
 | 5 | Validation (`tests/validate.sh`) | |
 | 6 | Operate; read-only gateway root | |
@@ -113,6 +113,36 @@ the image tag in both `sandbox/install.sh` and `config/openclaw.json5`
 
 **Do not set `tools.exec.mode`.** In 2026.10.10, `mode: "deny"` also blocks
 exec inside the sandbox. Gateway exec is blocked by the approvals policy.
+
+## Phase 3b
+
+```bash
+cd ~/openclaw-docker-vm && git pull
+./sandbox/egress-install.sh     # firewall + networks (sudo), proxy, gateway restart
+# in a NEW chat, ask the agent to run:  pip download --no-deps -d /tmp/t six && ls /tmp/t
+./tests/phase3b-check.sh
+./tests/phase3-check.sh         # still passes; sandbox network is now oc-sbx
+```
+
+Sandboxes move from no network to `oc-sbx`, a Docker internal network whose
+only other member is the Squid proxy (`oc-proxy`, 172.30.20.2:3128). Squid
+allows HTTPS to the domains in `compose/proxy/allowlist.txt` and nothing else:
+no plain HTTP, no private addresses, no TLS interception. Its outbound side,
+`oc-egress`, is limited by the `OC-EGRESS` firewall chain to DNS plus 80/443 on
+public addresses.
+
+Default allowlist: PyPI, npm, the Go module proxy and crates.io. GitHub is
+off: access to clone is also access to push, an easy way to send data out.
+
+- **Change the allowlist:** edit `compose/proxy/allowlist.txt`, commit, pull,
+  then `cd compose && docker compose restart oc-proxy`.
+- **Watch decisions:** `docker logs -f oc-proxy` (`TCP_TUNNEL/200` allowed,
+  `TCP_DENIED/403` denied).
+- **Installing packages in the sandbox:** `/opt/venv` is read-only, so use a
+  per-project venv in the workspace, e.g.
+  `python3 -m venv --system-site-packages /workspace/proj/.venv`.
+- **Cut sandboxes off again:** set `network: "none"` in `config/openclaw.json5`
+  and re-run `./compose/install.sh`.
 
 ## Reaching the Control UI
 
