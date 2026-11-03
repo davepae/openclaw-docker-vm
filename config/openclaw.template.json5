@@ -95,9 +95,10 @@
     // behind a search step (the default for OpenAI-compatible providers), and
     // drop the progress-card UI tool. The model (125B at IQ2_XS) was spending its turns on
     // tool_search and progress_card instead of the task.
-    // toolSearch is set from the context window by scripts/site_settings.py:
-    // off (all tool schemas in the prompt, about 35k tokens) at 65536 or more,
-    // on (about 15k tokens) below that, where the full set would not fit.
+    // toolSearch is set by scripts/site_settings.py from the room left for the
+    // prompt (context window minus max output tokens): off (all tool schemas
+    // in the prompt, about 35k tokens) at 57344 or more, i.e. a 65536 context
+    // with 8192 max tokens; on (about 15k tokens) below that.
     toolSearch: @@TOOL_SEARCH@@,
     updatePlan: false,
     // Sandboxed sessions only get a default tool allowlist, which omits web

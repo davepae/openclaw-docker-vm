@@ -41,6 +41,12 @@ chmod 600 .env
 setvar DOCKER_GID "$(stat -c %g /var/run/docker.sock)"
 # Self-hosted Firecrawl ignores the key, but OpenClaw's Firecrawl tools require one.
 [[ -n "$(getvar FIRECRAWL_API_KEY)" ]] || setvar FIRECRAWL_API_KEY "selfhosted"
+# Before v0.4 the model server's key lived here; it is in site.env now.
+if grep -q '^STRATA_API_KEY=' .env; then
+  tmp="$(mktemp)"; grep -v '^STRATA_API_KEY=' .env > "$tmp" || true
+  cat "$tmp" > .env && rm -f "$tmp"
+  echo "    removed the old STRATA_API_KEY from compose/.env (now in site.env)"
+fi
 
 # --- Pin the release by digest ---------------------------------------------------
 VERSION="$(getvar OPENCLAW_VERSION)"
@@ -70,16 +76,35 @@ chmod 600 "$GEN/.openclaw.json5.new" ../config/exec-approvals.json
 
 # One-shot commands need the state lock, so a running gateway is stopped first
 # (OpenClaw's recommended upgrade order: stop the old one, then start the new).
+WAS_RUNNING=no
 if [[ "$(docker inspect -f '{{.State.Running}}' openclaw-gateway 2>/dev/null)" == "true" ]]; then
+  WAS_RUNNING=yes
   log "Stopping the running gateway"
   docker compose stop openclaw-gateway
-  # Keep the config it was running with. If anything below fails, put that
-  # config back and start the previous gateway, so it is never left down.
-  [[ -f "$GEN/openclaw.json5" ]] && cp -p "$GEN/openclaw.json5" "$GEN/.openclaw.json5.prev"
-  trap 'echo "!! Failed; restoring the previous config and starting the previous gateway"
-        [[ -f "$GEN/.openclaw.json5.prev" ]] && mv -f "$GEN/.openclaw.json5.prev" "$GEN/openclaw.json5"
-        docker compose start openclaw-gateway || true' ERR
 fi
+
+# Keep the current rendered config. If anything below fails, put it back and,
+# if the gateway was running, start it again so it is never left down. With no
+# earlier rendered config (the first run of this layout) there is nothing to
+# go back to: the failed config is moved aside and the rollback is explained.
+rm -f "$GEN/.openclaw.json5.prev"
+[[ -f "$GEN/openclaw.json5" ]] && cp -p "$GEN/openclaw.json5" "$GEN/.openclaw.json5.prev"
+on_fail() {
+  if [[ -f "$GEN/.openclaw.json5.prev" ]]; then
+    echo "!! Failed; restoring the previous config"
+    mv -f "$GEN/.openclaw.json5.prev" "$GEN/openclaw.json5"
+    if [[ "$WAS_RUNNING" == yes ]]; then
+      echo "!! Starting the previous gateway"; docker compose start openclaw-gateway || true
+    fi
+  else
+    mv -f "$GEN/openclaw.json5" "$GEN/openclaw.json5.failed" 2>/dev/null || true
+    echo "!! Failed, and there is no earlier rendered config to restore (kept as"
+    echo "   config/generated/openclaw.json5.failed). The gateway is stopped. Fix the"
+    echo "   setting and re-run, or roll back: a Proxmox snapshot, or for a v0.3"
+    echo "   install: git checkout v0.3 && ./compose/install.sh"
+  fi
+}
+trap on_fail ERR
 
 mv -f "$GEN/.openclaw.json5.new" "$GEN/openclaw.json5"
 
@@ -98,7 +123,7 @@ if [[ -n "$(docker ps -aq --filter 'name=^openclaw-sbx-')" ]]; then
 fi
 
 trap - ERR
-rm -f "$GEN/.openclaw.json5.prev"
+rm -f "$GEN/.openclaw.json5.prev" "$GEN/openclaw.json5.failed"
 log "Starting the gateway"
 docker compose up -d --force-recreate openclaw-gateway
 

@@ -41,7 +41,11 @@ SITE_VERSION = "1"
 # Measured with OpenClaw 2026.10.10 (first request of a new session, all
 # allowlisted plugins): about 15k tokens with Tool Search on, 35k with it off.
 MIN_CONTEXT = 32768          # smallest context verified to work (Tool Search on)
-DIRECT_TOOLS_CONTEXT = 65536  # at or above this, Tool Search is turned off
+DIRECT_TOOLS_CONTEXT = 65536  # recommended context (Tool Search off at the default max tokens)
+# Room for the prompt = context window - max output tokens. OpenClaw's first
+# request is about 15k tokens with Tool Search on and about 35k with it off.
+MIN_PROMPT_ROOM = 24576       # 32768 - 8192
+DIRECT_TOOLS_ROOM = 57344     # 65536 - 8192: at or above this, Tool Search is off
 PROVIDERS = ("openai-compatible",)   # more choices (e.g. Anthropic) can be added later
 
 # Docker networks this build creates; a service must not live inside them.
@@ -121,7 +125,10 @@ def write(values, path=None):
 # --------------------------------------------------------------------------
 def parse_url(url, what):
     """Return (scheme, host, port, normalized_url). Raise SiteError if unusable."""
-    u = urllib.parse.urlsplit(url.strip())
+    url = url.strip()
+    if any(c.isspace() for c in url) or "${" in url:
+        raise SiteError(f"{what}: no spaces or ${{...}} in the URL ({url!r})")
+    u = urllib.parse.urlsplit(url)
     if u.scheme not in ("http", "https"):
         raise SiteError(f"{what}: must start with http:// or https:// (got {url!r})")
     if not u.hostname:
@@ -131,9 +138,11 @@ def parse_url(url, what):
     if u.query or u.fragment:
         raise SiteError(f"{what}: remove the ?query or #fragment from {url!r}")
     try:
-        port = u.port or (443 if u.scheme == "https" else 80)
+        port = u.port if u.port is not None else (443 if u.scheme == "https" else 80)
     except ValueError:
         raise SiteError(f"{what}: invalid port in {url!r}")
+    if port == 0:
+        raise SiteError(f"{what}: port 0 is not usable")
     host = u.hostname
     if host == "localhost" or host.endswith(".localhost"):
         raise SiteError(f"{what}: {host} would point at the gateway container itself. "
@@ -218,21 +227,32 @@ def check_int_fields(ctx_s, max_s):
         raise SiteError(f"LLM_CONTEXT_WINDOW: at least {MIN_CONTEXT} is needed. OpenClaw's first "
                         "request alone is about 15k tokens. Raise the server's context size "
                         "(Ollama defaults to 4096; set OLLAMA_CONTEXT_LENGTH).")
-    if ctx_s is not None and max_s is not None and not 256 <= int(max_s) < int(ctx_s):
-        raise SiteError("LLM_MAX_TOKENS: must be at least 256 and smaller than the context window")
+    if ctx_s is not None and max_s is not None:
+        ctx, mx = int(ctx_s), int(max_s)
+        if mx < 256:
+            raise SiteError("LLM_MAX_TOKENS: must be at least 256")
+        if ctx - mx < MIN_PROMPT_ROOM:
+            raise SiteError(f"LLM_MAX_TOKENS: the context window minus max output tokens must "
+                            f"leave at least {MIN_PROMPT_ROOM} tokens for the prompt; use at most "
+                            f"{ctx - MIN_PROMPT_ROOM} with a {ctx} context")
 
 
 def check_dns(raw):
-    dns = raw.split()
+    dns = list(dict.fromkeys(raw.split()))
     if not dns:
         raise SiteError("DNS_SERVERS: at least one address is needed")
-    for a in dns:
+    for i, a in enumerate(dns):
         try:
             ip = ipaddress.IPv4Address(a)
         except ValueError:
             raise SiteError(f"DNS_SERVERS: {a!r} is not an IPv4 address")
         if ip.is_loopback:
             raise SiteError("DNS_SERVERS: use the real upstream server, not 127.0.0.53")
+        if ip.is_unspecified or ip.is_multicast or ip == ipaddress.IPv4Address("255.255.255.255"):
+            raise SiteError(f"DNS_SERVERS: {a} is not a usable server address")
+        if any(ip in n for n in RESERVED_NETS):
+            raise SiteError(f"DNS_SERVERS: {a} is inside a Docker network this build uses")
+        dns[i] = str(ip)
     return " ".join(dns)
 
 
@@ -243,12 +263,19 @@ def check_admin(raw):
         raise SiteError(f"ADMIN_IP: {raw!r} is not an IPv4 address or subnet")
     if net.prefixlen < 16:
         raise SiteError("ADMIN_IP: a subnet wider than /16 would open SSH too broadly")
-    return raw
+    a = net.network_address
+    if a.is_unspecified or a.is_loopback or a.is_multicast or a == ipaddress.IPv4Address("255.255.255.255"):
+        raise SiteError(f"ADMIN_IP: {raw} is not your admin machine's address")
+    # Written in canonical form (host bits cleared) for the Proxmox rule.
+    return str(a) if net.prefixlen == 32 else str(net)
 
 
 def check_text(key, raw):
-    if any(ord(c) < 32 for c in raw) or raw != raw.strip() or "'" in raw:
-        raise SiteError(f"{key}: no single quotes, leading/trailing spaces or control characters")
+    # Printable ASCII only (also keeps the HTTP Authorization header valid).
+    if any(not 32 <= ord(c) <= 126 for c in raw) or raw != raw.strip() or "'" in raw:
+        raise SiteError(f"{key}: printable ASCII only; no single quotes or leading/trailing spaces")
+    if "${" in raw:
+        raise SiteError(f"{key}: '${{' is not allowed (OpenClaw would substitute it)")
     return raw
 
 
@@ -269,7 +296,7 @@ def validate(values, resolver=None, locals_=None, network=True):
     if v["LLM_IMAGE_INPUT"] not in ("yes", "no"):
         raise SiteError("LLM_IMAGE_INPUT: yes or no")
     v["DNS_SERVERS"] = check_dns(v["DNS_SERVERS"])
-    check_admin(v["ADMIN_IP"])
+    v["ADMIN_IP"] = check_admin(v["ADMIN_IP"])
     for key, what in (("LLM_BASE_URL", "Model server URL"), ("SEARXNG_URL", "SearXNG URL"),
                       ("FIRECRAWL_URL", "Firecrawl URL")):
         v[key] = parse_url(v[key], what)[3]
@@ -281,6 +308,10 @@ def validate(values, resolver=None, locals_=None, network=True):
 # --------------------------------------------------------------------------
 # outputs
 # --------------------------------------------------------------------------
+def prompt_room(v):
+    return int(v["LLM_CONTEXT_WINDOW"]) - int(v["LLM_MAX_TOKENS"])
+
+
 def render_config(values, template=None):
     template = template or TEMPLATE
     """The OpenClaw config with site values filled in (JSON-escaped)."""
@@ -295,7 +326,7 @@ def render_config(values, template=None):
         "SEARXNG_URL": json.dumps(v["SEARXNG_URL"]),
         "FIRECRAWL_URL": json.dumps(v["FIRECRAWL_URL"]),
         # Direct tool schemas help heavily quantized models, but need the room.
-        "TOOL_SEARCH": "false" if int(v["LLM_CONTEXT_WINDOW"]) >= DIRECT_TOOLS_CONTEXT else "true",
+        "TOOL_SEARCH": "false" if prompt_room(v) >= DIRECT_TOOLS_ROOM else "true",
     }
     with open(template) as f:
         text = f.read()
@@ -424,9 +455,12 @@ def yes(prompt, default=False):
 def configure(_args):
     cur = {}
     if os.path.exists(SITE_ENV):
-        cur = load()
-        print(f"Updating {SITE_ENV}. Press Enter to keep a value.\n")
-    else:
+        try:
+            cur = load()
+            print(f"Updating {SITE_ENV}. Press Enter to keep a value.\n")
+        except SiteError as e:
+            print(f"! {SITE_ENV} could not be read ({e}); starting from scratch.\n")
+    if not cur:
         print("Site settings for this OpenClaw VM. You'll need:\n"
               "  - an OpenAI-compatible model server on your LAN (Strata, Ollama, LM Studio,\n"
               "    vLLM, llama.cpp ...): its base URL, model name and API key\n"
@@ -456,7 +490,7 @@ def configure(_args):
         models = list_models(v["LLM_BASE_URL"], v["LLM_API_KEY"])
         print(f"    Server reachable. Models: {', '.join(models[:12]) or '(none listed)'}"
               f"{' ...' if len(models) > 12 else ''}")
-    except (SiteError, OSError) as e:
+    except Exception as e:  # unreachable, not HTTP, bad URL ...: never lose the answers
         print(f"    ! Could not list models: {e}")
         if not yes("Continue anyway (for example, the server is offline right now)?"):
             raise SiteError("stopped; check the base URL and key, then re-run ./configure.sh")
@@ -468,7 +502,8 @@ def configure(_args):
             break
     print(f"    The context window must match the server's setting: at least {MIN_CONTEXT},"
           f"\n    {DIRECT_TOOLS_CONTEXT} or more recommended. Ollama defaults to 4096; raise it on"
-          "\n    the server with OLLAMA_CONTEXT_LENGTH.")
+          "\n    the server with OLLAMA_CONTEXT_LENGTH. A server that splits its context across"
+          "\n    parallel slots (llama.cpp --parallel) gives each request only its share.")
     v["LLM_CONTEXT_WINDOW"] = ask("Context window (tokens)", cur.get("LLM_CONTEXT_WINDOW", "65536"),
                                   check=lambda val: (check_int_fields(val, None), val)[1])
     v["LLM_MAX_TOKENS"] = ask("Max output tokens", cur.get("LLM_MAX_TOKENS", "8192"),
@@ -491,13 +526,17 @@ def configure(_args):
         try:
             status, _ = http_get(v[key] + "/")
             print(f"    {label} reachable (HTTP {status})")
-        except OSError as e:
+        except Exception as e:
             print(f"    ! {label} not reachable right now ({e}); saved anyway, the checks will tell")
 
     print("\nNetwork")
-    v["DNS_SERVERS"] = ask("DNS server(s) this VM uses", cur.get("DNS_SERVERS", detect_dns()),
+    detected = detect_dns()
+    v["DNS_SERVERS"] = ask("DNS server(s) this VM uses", cur.get("DNS_SERVERS", detected),
                            check=check_dns,
                            hint="Detected from the VM's resolver. The gateway may use only these.")
+    if detected and set(v["DNS_SERVERS"].split()) != set(detected.split()):
+        print(f"    ! The VM resolves through {detected}. Docker passes those servers to the\n"
+              "      gateway, so DNS from the gateway fails unless they are allowed here too.")
     v["ADMIN_IP"] = ask("Admin machine IP or subnet (allowed to SSH in)",
                         cur.get("ADMIN_IP", admin_from_ssh()), check=check_admin,
                         hint="The machine you SSH from; used for the Proxmox firewall rules.")
@@ -551,6 +590,19 @@ def selftest(_args):
     t("plain-http Firecrawl on a public IP refused", raises(lambda: validate({**base, "FIRECRAWL_URL": "http://public.example.com:3002"}, res, mine)))
     t("https Firecrawl on a public IP allowed", validate({**base, "FIRECRAWL_URL": "https://public.example.com"}, res, mine) is not None)
     t("max tokens >= context refused", raises(lambda: validate({**base, "LLM_MAX_TOKENS": "32768"}, res, mine)))
+    t("max tokens leaving < 24576 for the prompt refused", raises(lambda: validate({**base, "LLM_MAX_TOKENS": "8193"}, res, mine)))
+    t("32768 context with 8192 max accepted", validate({**base, "LLM_MAX_TOKENS": "8192"}, res, mine) is not None)
+    t("port 0 refused", raises(lambda: parse_url("http://x:0/v1", "u")))
+    t("space in URL refused", raises(lambda: parse_url("http://x/v 1", "u")))
+    t("${ in model name refused", raises(lambda: validate({**base, "LLM_MODEL": "a${HOME}"}, res, mine)))
+    t("non-ASCII API key refused", raises(lambda: validate({**base, "LLM_API_KEY": "kéy"}, res, mine)))
+    t("DEL in API key refused", raises(lambda: validate({**base, "LLM_API_KEY": "k\x7f"}, res, mine)))
+    t("DNS 0.0.0.0 refused", raises(lambda: validate({**base, "DNS_SERVERS": "0.0.0.0"}, res, mine)))
+    t("DNS in a build Docker network refused", raises(lambda: validate({**base, "DNS_SERVERS": "172.30.10.1"}, res, mine)))
+    t("duplicate DNS servers merged", validate({**base, "DNS_SERVERS": "192.168.1.1 192.168.1.1"}, res, mine)["DNS_SERVERS"] == "192.168.1.1")
+    t("admin subnet written canonically", validate({**base, "ADMIN_IP": "192.168.1.10/24"}, res, mine)["ADMIN_IP"] == "192.168.1.0/24")
+    t("admin /32 written as a bare address", validate({**base, "ADMIN_IP": "192.168.1.10/32"}, res, mine)["ADMIN_IP"] == "192.168.1.10")
+    t("admin 0.0.0.0 refused", raises(lambda: validate({**base, "ADMIN_IP": "0.0.0.0"}, res, mine)))
     t("non-numeric context refused", raises(lambda: validate({**base, "LLM_CONTEXT_WINDOW": "32k"}, res, mine)))
     t("context below 32768 refused", raises(lambda: validate({**base, "LLM_CONTEXT_WINDOW": "16384"}, res, mine)))
     t("context of exactly 32768 accepted", validate({**base, "LLM_CONTEXT_WINDOW": "32768"}, res, mine) is not None)
@@ -594,8 +646,12 @@ def selftest(_args):
         t("render: image input -> text+image", 'd: ["text", "image"]' in body)
         t("render: API key stays an env reference", '"${LLM_API_KEY}"' in body)
         t("render: tool search on at a 32768 context", "f: true" in render_config({**v, "LLM_CONTEXT_WINDOW": "32768"}, tpl))
-        t("render: tool search off at 65536 context", "f: false" in render_config({**v, "LLM_CONTEXT_WINDOW": "65536"}, tpl))
+        t("render: tool search off at 65536 context / 8192 max", "f: false" in render_config({**v, "LLM_CONTEXT_WINDOW": "65536"}, tpl))
         t("render: tool search on just below 65536", "f: true" in render_config({**v, "LLM_CONTEXT_WINDOW": "65535"}, tpl))
+        t("render: tool search on at 65536 with 16384 max tokens",
+          "f: true" in render_config({**v, "LLM_CONTEXT_WINDOW": "65536", "LLM_MAX_TOKENS": "16384"}, tpl))
+        t("render: tool search off at 131072 / 8192 (reference lab)",
+          "f: false" in render_config({**v, "LLM_CONTEXT_WINDOW": "131072"}, tpl))
         with open(tpl, "w") as f:
             f.write("{ a: @@NOT_A_FIELD@@ }")
         t("render: unknown placeholder refused", raises(lambda: render_config(v, tpl)))
@@ -621,6 +677,9 @@ def main(argv=None):
             return selftest(args)
         values = validate(load(), network=args.cmd not in ("check", "env"))
         if args.cmd == "check":
+            if os.stat(SITE_ENV).st_mode & 0o077:
+                print(f"warning: {SITE_ENV} is readable by other users (it holds the API key); "
+                      f"run: chmod 600 {SITE_ENV}", file=sys.stderr)
             print("site.env OK")
         elif args.cmd == "env":
             if args.name not in values:

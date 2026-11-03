@@ -106,7 +106,8 @@ HTTPS.
   4 cores (CPU type `host`), 16 GB RAM (ballooning minimum = 16 GB), 80 GB disk
   (VirtIO SCSI single, discard on), VirtIO NIC with the Proxmox firewall
   enabled. Install OpenSSH and import your SSH key; do not install the Docker
-  snap.
+  snap (`vm/harden.sh` installs Docker Engine and Compose from Docker's own
+  repository; Compose 2.24 or later is needed).
 - An admin account (any name; the reference build uses `ocadmin`) that is the
   first user, so it is UID 1000 like the `node` user in the OpenClaw image.
 - An OpenAI-compatible model server on your LAN, serving a model that supports
@@ -159,7 +160,7 @@ offers.
 | `LLM_MODEL` | The model id exactly as the server lists it under `/v1/models` |
 | `LLM_API_KEY` | The server's API key; any placeholder such as `none` if it has none (typed hidden) |
 | `LLM_CONTEXT_WINDOW` | The context size the server actually runs the model with, in tokens (at least 32768) |
-| `LLM_MAX_TOKENS` | Longest reply per request (default 8192) |
+| `LLM_MAX_TOKENS` | Longest reply per request (default 8192); the context window minus this must leave at least 24576 tokens for the prompt |
 | `LLM_IMAGE_INPUT` | `yes` only if the model accepts images |
 | `SEARXNG_URL`, `FIRECRAWL_URL` | Base URLs of your SearXNG and Firecrawl |
 | `DNS_SERVERS` | The DNS server(s) the gateway may use (detected from the VM) |
@@ -179,11 +180,17 @@ shows the format.
 | Ollama | `http://<host>:11434/v1` | `none` (ignored) | Ollama listens on 127.0.0.1 only: set `OLLAMA_HOST=0.0.0.0`. Its default context is 4096 tokens, too small: set `OLLAMA_CONTEXT_LENGTH=65536` (at least 32768) and enter the same number here. |
 | LM Studio | `http://<host>:1234/v1` | `none`, or the token if you turned on authentication | Turn on serving on the local network in the Developer tab, and load the model with a context length of at least 32768. Model ids look like `author/model`. |
 
-**Tool Search is set from the context size.** With a context window of 64k
-(65536) or more, all tools are given to the model directly, which works best
-with small or heavily quantized models. Below that, the full tool list alone
-(about 35k tokens) would not fit, so OpenClaw's Tool Search is turned on and
-tool schemas are fetched on demand (about 15k tokens per request).
+**Tool Search is set from the context size.** When the context window minus
+max output tokens leaves 57344 tokens or more (for example 65536 with the
+default 8192), all tools are given to the model directly, which works best with
+small or heavily quantized models. Below that, the full tool list alone (about
+35k tokens) would not fit, so OpenClaw's Tool Search is turned on and tool
+schemas are fetched on demand (about 15k tokens per request).
+
+Names are resolved on the VM when you run `./configure.sh` and
+`sudo ./firewall/install.sh`, and the firewall allows the resulting addresses.
+Use names your DNS server answers; an entry in the VM's `/etc/hosts` is not
+seen by the gateway container.
 
 **Changing a setting later:**
 
@@ -269,20 +276,30 @@ v0.4 moves the lab values out of the tracked files into `site.env`. The model
 provider is renamed from `strata` to `llm`; existing sessions keep working.
 
 1. Proxmox snapshot of the VM.
-2. Save the current effective config for comparison:
-   `docker exec openclaw-gateway openclaw config get models --json > ~/v03-models.json`
-3. `git fetch --tags && git checkout v0.4`, then `./configure.sh`. Your
-   existing API key is offered as the default; enter your current server
-   values for the rest.
-4. `./compose/install.sh`, then `sudo ./firewall/install.sh`.
-5. Run all the checks. Compare
-   `docker exec openclaw-gateway openclaw config get models --json` with the
-   saved file: only the provider name (`strata` → `llm`) and the model's
-   display name should differ.
+2. Save the current settings, for entering them in step 4 and comparing in
+   step 6:
 
-The first run of the new layout has no previous rendered config to fall back
-on. If it fails, roll back to the snapshot, or `git checkout v0.3 &&
-./compose/install.sh`.
+   ```bash
+   docker exec openclaw-gateway openclaw config get models --json  > ~/v03-models.json
+   docker exec openclaw-gateway openclaw config get plugins --json > ~/v03-plugins.json
+   ```
+
+3. Stop the gateway before checking out v0.4, which removes the config file it
+   runs with: `(cd compose && docker compose stop openclaw-gateway)`.
+4. `git fetch --tags && git checkout v0.4`, then `./configure.sh`. Your
+   existing API key is offered as the default. Enter the other values exactly
+   as in the saved files: `baseUrl`, the model `id`, `contextWindow`,
+   `maxTokens`, image input `yes` if `input` lists `"image"`, and the SearXNG
+   and Firecrawl `baseUrl`s. The defaults are for new installs and differ.
+5. `./compose/install.sh`, then `sudo ./firewall/install.sh`. The old
+   `STRATA_API_KEY` line is removed from `compose/.env`.
+6. Run all the checks, and compare the same two commands with the saved files:
+   only the provider name (`strata` → `llm`) and the model's display name
+   should differ.
+
+This first run of the new layout has no previous rendered config to fall back
+on, so if it fails the gateway stays stopped. Roll back to the snapshot, or
+`git checkout v0.3 && ./compose/install.sh`.
 
 ## Backups and restore
 

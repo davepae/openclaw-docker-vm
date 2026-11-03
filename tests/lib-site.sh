@@ -12,5 +12,9 @@ FIRECRAWL_URL="$(site env FIRECRAWL_URL)"
 DNS1="$(site env DNS_SERVERS | awk '{print $1}')"
 read -r LLM_IP LLM_PORT < <(site endpoint llm) || { echo "FAIL  cannot resolve the model server"; exit 1; }
 read -r SEARX_IP SEARX_PORT < <(site endpoint searxng) || { echo "FAIL  cannot resolve SearXNG"; exit 1; }
-is_private() { python3 -c 'import ipaddress, sys; sys.exit(0 if ipaddress.IPv4Address(sys.argv[1]).is_private else 1)' "$1"; }
+# True if the address is in PRIVATE_RANGES (firewall.conf), the ranges OC-EGRESS drops.
+is_private() {
+  local ranges; ranges="$(sed -n 's/^PRIVATE_RANGES="\(.*\)"$/\1/p' "$REPO/firewall/firewall.conf")"
+  python3 -c 'import ipaddress, sys; ip = ipaddress.IPv4Address(sys.argv[1]); sys.exit(0 if any(ip in ipaddress.IPv4Network(n) for n in sys.argv[2].split()) else 1)' "$1" "$ranges"
+}
 export LLM_BASE_URL LLM_MODEL SEARXNG_URL FIRECRAWL_URL DNS1 LLM_IP LLM_PORT SEARX_IP SEARX_PORT

@@ -22,7 +22,7 @@ FROM=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from) FROM="${2:?--from needs a step number}"; shift 2 ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1 (see --help)"; exit 1 ;;
   esac
 done
@@ -33,13 +33,19 @@ want() { [[ "$1" -ge "$FROM" ]]; }
 [[ $EUID -ne 0 ]] || { echo "Run as your admin user, not root."; exit 1; }
 . /etc/os-release
 [[ "${ID:-}" == "ubuntu" ]] || echo "Warning: built and tested on Ubuntu; this is ${PRETTY_NAME:-unknown}."
-sudo -v   # ask for the sudo password once, up front
+# harden.sh restricts SSH to key login; check for a key before asking anything.
+[[ -s "$HOME/.ssh/authorized_keys" ]] || {
+  echo "No SSH key in ~/.ssh/authorized_keys. From your admin machine run:"
+  echo "  ssh-copy-id ${USER}@$(hostname -I | awk '{print $1}')"
+  exit 1
+}
 
 # The site settings are needed by every later step; ask for them first.
 if [[ ! -f site.env ]]; then
   step 0 "Site settings"
   ./configure.sh
 fi
+sudo -v   # ask for the sudo password once, after the questions
 
 if want 1; then
   step 1 "VM hardening and Docker Engine"
