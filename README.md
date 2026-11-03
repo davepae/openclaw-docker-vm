@@ -144,6 +144,8 @@ Done by hand, outside the VM:
 
 ## Adapting it to your network
 
+See [PORTING.md](PORTING.md) for every value to change and notes on other model servers, hypervisors and clouds.
+
 The values specific to this lab live in four places:
 
 | File | Holds |
