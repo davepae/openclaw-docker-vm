@@ -1,0 +1,84 @@
+# OpenClaw gateway stack for the openclaw VM.
+# Run from compose/ via install.sh, or:  docker compose up -d openclaw-gateway
+name: openclaw
+
+x-openclaw-env: &openclaw-env
+  HOME: /home/node
+  OPENCLAW_HOME: /home/node
+  TERM: xterm-256color
+  # State and workspace live under /srv/openclaw at the SAME path as on the
+  # host, so paths the gateway hands to the Docker daemon resolve correctly.
+  OPENCLAW_STATE_DIR: /srv/openclaw/state
+  OPENCLAW_CONFIG_DIR: /srv/openclaw/state
+  OPENCLAW_WORKSPACE_DIR: /srv/openclaw/workspace
+  # Config comes from the repo, read-only.
+  OPENCLAW_CONFIG_PATH: /run/config/openclaw.json
+  OPENCLAW_CONFIG_READONLY: "1"
+  OPENCLAW_GATEWAY_PORT: "18789"
+  OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?run install.sh first}
+  STRATA_API_KEY: ${STRATA_API_KEY:?run install.sh first}
+  OPENCLAW_DISABLE_BONJOUR: "1"
+  TZ: ${TZ:-UTC}
+
+x-openclaw-volumes: &openclaw-volumes
+  - /srv/openclaw:/srv/openclaw
+  - ../config/openclaw.json5:/run/config/openclaw.json:ro
+  - /srv/openclaw/auth-secrets:/home/node/.config/openclaw
+
+services:
+  openclaw-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+      args:
+        OPENCLAW_IMAGE: ${OPENCLAW_IMAGE:?run install.sh first}
+    image: openclaw-gateway-local:${OPENCLAW_VERSION:?}
+    container_name: openclaw-gateway
+    environment: *openclaw-env
+    volumes:
+      - /srv/openclaw:/srv/openclaw
+      - ../config/openclaw.json5:/run/config/openclaw.json:ro
+      - /srv/openclaw/auth-secrets:/home/node/.config/openclaw
+      # Lets the gateway start sibling sandbox containers. This is root-equivalent
+      # on the VM, which is why the VM is the trust boundary.
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:?run install.sh first}"
+    command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--port", "18789"]
+    ports:
+      - "127.0.0.1:18789:18789"
+    networks:
+      - oc-gw
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
+    # Health: the image's built-in HEALTHCHECK probes /healthz.
+
+  # One-shot CLI, sharing the gateway's network namespace:
+  #   docker compose run --rm openclaw-cli <command>
+  openclaw-cli:
+    image: openclaw-gateway-local:${OPENCLAW_VERSION:?}
+    profiles: ["cli"]
+    network_mode: "service:openclaw-gateway"
+    environment: *openclaw-env
+    volumes: *openclaw-volumes
+    entrypoint: ["node", "dist/index.js"]
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    stdin_open: true
+    tty: true
+
+networks:
+  oc-gw:
+    external: true  # created by firewall/install.sh, with the DOCKER-USER allowlist

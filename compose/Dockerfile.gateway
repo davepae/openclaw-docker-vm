@@ -1,0 +1,8 @@
+# The official OpenClaw image plus the Docker CLI (client only, no daemon).
+# The gateway needs the CLI to start sibling sandbox containers through the
+# host's Docker socket; the published image does not include it.
+ARG OPENCLAW_IMAGE
+FROM docker:29-cli AS dockercli
+
+FROM ${OPENCLAW_IMAGE}
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker

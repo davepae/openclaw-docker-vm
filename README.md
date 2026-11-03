@@ -13,8 +13,8 @@ that runs on the gateway is effectively root on the VM.
 | Phase | What | Status |
 | --- | --- | --- |
 | 0 | VM base hardening and Docker Engine (`vm/harden.sh`) | done |
-| 1 | Network policy (`firewall/`) | ready |
-| 2 | Gateway stack (`compose/`) | next |
+| 1 | Network policy (`firewall/`) | done |
+| 2 | Gateway stack (`compose/`, `config/`) | ready |
 | 3 | Sandbox image and policy (`sandbox/`, `config/`) | |
 | 3b | Sandbox egress proxy | after PoC |
 | 4 | Access via SSH tunnel | |
@@ -48,9 +48,50 @@ check again, and take a snapshot named `phase1`.
 The allowlist lives in `firewall/firewall.conf`. To change it, edit that file
 and re-run `install.sh`.
 
-## Reaching the Control UI (from Phase 2)
+## Phase 2
+
+```bash
+cd ~/openclaw-docker-vm && git pull
+./compose/install.sh            # asks for the Strata API key once
+./tests/phase2-check.sh         # must end "0 failed"
+```
+
+`install.sh` creates `compose/.env` (mode 600, git-ignored) with a generated
+gateway token, your Strata key and the Docker group ID. It pulls the release
+named in `OPENCLAW_VERSION`, pins its digest in `OPENCLAW_IMAGE`, and builds a
+local image that adds the Docker CLI (needed for Phase 3 sandboxes). It
+validates `config/openclaw.json5`, writes the exec approvals policy, and
+starts the gateway.
+
+What Phase 2 runs:
+
+- Gateway as UID 1000, all capabilities dropped, 4 GB / 2 CPU limit, on
+  `oc-gw` (Strata, SearXNG, Firecrawl and DNS only).
+- Config mounted read-only from the repo (`OPENCLAW_CONFIG_READONLY=1`).
+- Model: `strata/qwen3.8-flash-next-iq2_xs`.
+- Exec: sandbox only, host exec denied in config and in the approvals policy;
+  elevated off. Sandboxing itself arrives in Phase 3, so until then the agent
+  can chat but cannot run commands.
+
+To change the config: edit `config/openclaw.json5`, commit, `git pull` on the
+VM, then `cd compose && docker compose up -d --force-recreate openclaw-gateway`.
+
+To upgrade OpenClaw: snapshot the VM, change `OPENCLAW_VERSION` in
+`compose/.env`, re-run `./compose/install.sh`.
+
+## Reaching the Control UI
+
+From the MacBook:
 
 ```bash
 ssh -N -L 18789:127.0.0.1:18789 ocadmin@openclaw.paelab.com
-# then open http://127.0.0.1:18789/
+# then open http://127.0.0.1:18789/ and paste the token from compose/.env
+```
+
+If the UI says pairing is required, approve the browser on the VM:
+
+```bash
+cd ~/openclaw-docker-vm/compose
+docker compose run --rm openclaw-cli devices list
+docker compose run --rm openclaw-cli devices approve <requestId>
 ```
