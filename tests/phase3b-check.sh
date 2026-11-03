@@ -5,7 +5,6 @@ set -uo pipefail
 cd "$(dirname "$0")/../compose" || exit 1
 
 PROXY=oc-proxy
-IMG="openclaw-sandbox-local:1"
 pass=0; fail=0; skip=0
 ok()  { echo "PASS  $1"; ((pass++)); }
 bad() { echo "FAIL  $1"; ((fail++)); }
