@@ -34,7 +34,7 @@ firewall (`firewall/proxmox-vm-rules.md`) and snapshots are done by hand.
 | 3b | Sandbox egress proxy (`compose/proxy/`) | done |
 | 4 | Access via SSH tunnel | |
 | 5 | Validation (`tests/validate.sh`) | |
-| 6 | Operate; read-only gateway root | |
+| 6 | Hardening: read-only root, plugin allowlist, backups (`backup/`) | ready |
 
 ## Phase 0
 
@@ -158,6 +158,56 @@ off: access to clone is also access to push, an easy way to send data out.
   `python3 -m venv --system-site-packages /workspace/proj/.venv`.
 - **Cut sandboxes off again:** set `network: "none"` in `config/openclaw.json5`
   and re-run `./compose/install.sh`.
+
+## Phase 6
+
+```bash
+cd ~/openclaw-docker-vm && git pull
+./compose/install.sh            # read-only gateway root + plugin allowlist
+sudo ./backup/install.sh        # nightly backups, plus one taken now
+./tests/phase6-check.sh
+```
+
+- **Read-only gateway root.** Only `/srv/openclaw` (state, workspace, update
+  captures, caches), the auth-secrets bind and tmpfs mounts (`/tmp`, and
+  `.cache`, `.npm`, `.docker` under `/home/node`) are writable. If a future
+  release writes somewhere new, the logs show `EROFS`; add a tmpfs for that
+  path in `compose/docker-compose.yml`.
+- **Plugin allowlist.** `plugins.allow` in `config/openclaw.json5` loads only
+  `searxng`, `firecrawl`, `memory-core` and `device-pair` (Control UI
+  pairing). Without it, 2026.10.10 enables about 40 bundled plugins,
+  including browser control, computer use, file transfer and cloud model
+  providers.
+- **Backups.** `openclaw-backup.timer` runs `openclaw backup create --verify`
+  nightly at about 03:15 into `/srv/openclaw/backups` (mode 600, 14 days
+  kept). It is safe while the gateway runs; never copy live `.sqlite` files.
+  Run one now with `sudo systemctl start openclaw-backup`.
+- **Off-host copies.** Those archives live on the VM's own disk. In Proxmox,
+  add a backup job for this VM (Datacenter → Backup → Add, mode Snapshot) to
+  storage on another machine (a NAS or Proxmox Backup Server). `compose/.env`
+  is not in the OpenClaw archive but is in the VM backup; its only secret you
+  can't regenerate is the Strata key.
+
+**Restore OpenClaw state** from an archive: `openclaw backup restore`
+extracts into a fresh directory, never over live state.
+
+```bash
+docker exec openclaw-gateway openclaw backup restore \
+  /srv/openclaw/backups/<archive>.tar.gz --target /srv/openclaw/restore-<date>
+# inspect it, then with the gateway stopped (cd compose && docker compose stop
+# openclaw-gateway), move the restored state and workspace into place and run
+# ./compose/install.sh. For a full disaster, restore the Proxmox VM backup.
+```
+
+**Upgrading OpenClaw:**
+1. Proxmox snapshot, then `sudo systemctl start openclaw-backup`.
+2. Set the new `OPENCLAW_VERSION` in `compose/.env`.
+3. `./compose/install.sh`, then `./sandbox/install.sh` (upgrades the plugins
+   to the matching version).
+4. `docker exec openclaw-gateway openclaw plugins doctor`. The Firecrawl plugin
+   currently reports an `[info]` notice that it uses APIs retiring
+   2026-10-01; if a release removes them, this is where it shows.
+5. Run all the checks.
 
 ## Reaching the Control UI
 

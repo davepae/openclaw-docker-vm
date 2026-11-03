@@ -12,7 +12,8 @@
 #   3  Gateway container                compose/install.sh
 #   4  Sandbox image + web plugins      sandbox/install.sh
 #   5  Sandbox egress proxy             sandbox/egress-install.sh
-#   6  Checks                           tests/phase1..3b
+#   6  Nightly backups                  backup/install.sh
+#   7  Checks                           tests/phase1..6
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -20,7 +21,7 @@ FROM=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from) FROM="${2:?--from needs a step number}"; shift 2 ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1 (see --help)"; exit 1 ;;
   esac
 done
@@ -69,11 +70,17 @@ if want 5; then
 fi
 
 if want 6; then
-  step 6 "Checks"
+  step 6 "Nightly backups"
+  sudo ./backup/install.sh
+fi
+
+if want 7; then
+  step 7 "Checks"
   ./tests/phase1-check.sh
   ./tests/phase2-check.sh
   ./tests/phase3-check.sh
   ./tests/phase3b-check.sh
+  ./tests/phase6-check.sh
 fi
 
 cat <<'EOF'
@@ -82,7 +89,8 @@ cat <<'EOF'
 
 Manual steps that live outside the VM:
   - Proxmox VM firewall: firewall/proxmox-vm-rules.md (first build only)
-  - Proxmox snapshot of the finished VM
+  - Proxmox snapshot of the finished VM, and a scheduled Proxmox backup job
+    for it to storage off this host (see README, Phase 6)
   - From the MacBook: ssh -N -L 18789:127.0.0.1:18789 ocadmin@openclaw.paelab.com
     then open http://127.0.0.1:18789/ with the token from compose/.env
   - In a new chat, ask the agent to run a command; then re-run

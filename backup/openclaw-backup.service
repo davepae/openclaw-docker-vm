@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenClaw state and workspace backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=__ADMIN_USER__
+ExecStart=/usr/local/sbin/oc-backup.sh

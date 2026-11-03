@@ -103,6 +103,11 @@
   // Plugin packages are installed into the state dir by sandbox/install.sh
   // (the gateway itself has no internet); this config only enables them.
   plugins: {
+    // Phase 6: load only these. Without an allowlist 2026.10.10 enables ~40
+    // bundled plugins (browser, computer use, file transfer, cloud model
+    // providers...). device-pair is needed for Control UI browser pairing.
+    // Tested: an agent turn against the Strata provider works with only these.
+    allow: ["searxng", "firecrawl", "memory-core", "device-pair"],
     entries: {
       searxng: {
         enabled: true,

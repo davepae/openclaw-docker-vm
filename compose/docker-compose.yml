@@ -20,6 +20,8 @@ x-openclaw-env: &openclaw-env
   STRATA_API_KEY: ${STRATA_API_KEY:?run install.sh first}
   FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-selfhosted}
   OPENCLAW_DISABLE_BONJOUR: "1"
+  # Phase 6: caches on the state volume, since the container root is read-only.
+  XDG_CACHE_HOME: /srv/openclaw/state/.cache
   TZ: ${TZ:-UTC}
 
 x-openclaw-volumes: &openclaw-volumes
@@ -47,6 +49,14 @@ services:
     group_add:
       - "${DOCKER_GID:?run install.sh first}"
     command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--port", "18789"]
+    # Phase 6: read-only root. Writable: /srv/openclaw (state, workspace,
+    # update captures, caches), the auth-secrets bind, and these tmpfs mounts.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/node/.cache:uid=1000,gid=1000,mode=0700
+      - /home/node/.npm:uid=1000,gid=1000,mode=0700
+      - /home/node/.docker:uid=1000,gid=1000,mode=0700
     ports:
       - "127.0.0.1:18789:18789"
     networks:
