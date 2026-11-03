@@ -259,6 +259,12 @@ command in a new chat, then re-run the check.
 - **`plugins list` is not what loads.** It shows the plugin registry. The
   gateway's startup line (`http server listening (4 plugins: ...)`) is the
   real set.
+- **Small local models need a simpler tool surface.** With an
+  OpenAI-compatible provider, OpenClaw defaults to Tool Search (tool schemas
+  behind a search step) and offers a `progress_card` UI tool. A 2-bit local
+  model spent a multi-step task on those and stopped; with
+  `tools.toolSearch: false` and `tools.updatePlan: false` the same prompt
+  succeeded. If a task still stalls, give one concrete step per message.
 - **Sandbox `/tmp` is `noexec`.** Go's temporary build directory is therefore
   in the workspace (`GOTMPDIR`).
 
