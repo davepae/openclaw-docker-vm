@@ -53,7 +53,7 @@ else
   check "internet unreachable from sandbox"    bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 https://example.com' >/dev/null 2>&1"
   check "LAN unreachable from sandbox"         bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 http://172.16.1.67:8080/' >/dev/null 2>&1"
   gwip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' openclaw-gateway)"
-  check "gateway API unreachable from sandbox" bash -c "! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 http://${gwip}:18789/healthz' >/dev/null 2>&1"
+  check "gateway API unreachable from sandbox" bash -c "[ -n '${gwip}' ] && ! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 http://${gwip}:18789/healthz' >/dev/null 2>&1"
   check "no DNS from sandbox (no DNS exfiltration channel)" bash -c "! docker exec $sbx getent hosts example.com >/dev/null 2>&1"
   check "Python PDF libs import"               docker exec "$sbx" sh -lc 'python3 -c "import pypdf, fitz, pdfplumber, reportlab"'
   check "Go, Rust and Node present"            docker exec "$sbx" sh -lc 'go version && cargo --version && node --version'
