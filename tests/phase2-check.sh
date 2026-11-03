@@ -3,6 +3,12 @@
 set -uo pipefail
 cd "$(dirname "$0")/../compose" || exit 1
 
+# Wait for a healthy gateway first: CLI checks fail while it is restarting.
+for _ in $(seq 1 40); do
+  [[ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' openclaw-gateway 2>/dev/null)" == healthy ]] && break
+  sleep 3
+done
+
 GW=openclaw-gateway
 MODEL="qwen3.8-flash-next-iq2_xs"
 pass=0; fail=0
