@@ -13,6 +13,10 @@ export npm_config_cache="$XDG_CACHE_HOME/npm"
 export GOPATH="$XDG_CACHE_HOME/go"
 export GOCACHE="$XDG_CACHE_HOME/go-build"
 export GOTOOLCHAIN=local          # never try to download another Go toolchain
+# /tmp is a noexec tmpfs, and `go run` / `go test` execute what they build in
+# their temp dir. Keep that dir in the workspace, where execution is allowed.
+export GOTMPDIR="$XDG_CACHE_HOME/go-tmp"
+mkdir -p "$GOTMPDIR" 2>/dev/null
 export CARGO_HOME="$XDG_CACHE_HOME/cargo"
 export MPLCONFIGDIR=/tmp/matplotlib
 export PYTHONDONTWRITEBYTECODE=1
