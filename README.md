@@ -1,226 +1,212 @@
 # openclaw-docker-vm
 
-Scripted build of a single-purpose Ubuntu VM on Proxmox that runs the OpenClaw
-gateway in Docker, with every agent session in a Docker sandbox. Local-only for
-the proof of concept: models from `llm.paelab.com`, web search and fetch from
-`intelnuc6`, no direct internet from the OpenClaw stack.
+A scripted, hardened build of an [OpenClaw](https://github.com/openclaw/openclaw)
+agent on a single-purpose Ubuntu VM on Proxmox. The OpenClaw gateway runs in
+Docker, every agent session runs its tools in a locked-down Docker sandbox, and
+the whole stack uses local services only: models from a local inference server,
+web search and page fetching from self-hosted SearXNG and Firecrawl.
 
-The VM is the trust boundary: the gateway holds the Docker socket, so anything
-that runs on the gateway is effectively root on the VM.
+One command builds the VM, and 69 automated checks verify it.
+
+## Security model
+
+The VM is the trust boundary. The gateway holds the host's Docker socket so it
+can start sandbox containers, which makes anything running *on* the gateway
+effectively root on the VM. Everything below is arranged around keeping
+untrusted work off the gateway and keeping the VM from reaching anything it
+does not need.
+
+| Layer | What it enforces |
+| --- | --- |
+| Proxmox VM firewall | SSH in from the admin machine only. Out: the LAN services below, DNS, NTP, and HTTP/HTTPS to the internet for host updates. Rest of the LAN and DMZ blocked. |
+| Gateway container | UID 1000, all capabilities dropped, read-only root, 4 GB / 2 CPU limit. Published on `127.0.0.1:18789` only; reached through an SSH tunnel. |
+| Gateway network (`oc-gw`) | `DOCKER-USER` allowlist: the model server, SearXNG, Firecrawl and LAN DNS. No internet. |
+| OpenClaw policy | Config mounted read-only from this repo (the agent cannot change its own policy). Exec runs only in sandboxes; gateway exec denied by the approvals policy; elevated mode off. Only 4 plugins load. |
+| Agent sandboxes | One container per agent: non-root, read-only root, no capabilities, no Docker socket, 6 GB / 2 CPU limit. The workspace is the only writable host path. |
+| Sandbox network (`oc-sbx`) | Docker internal network; its only exit is a Squid proxy allowing HTTPS to an allowlist of package registries (PyPI, npm, Go modules, crates.io). No LAN, no TLS interception. |
+| Proxy egress (`oc-egress`) | `OC-EGRESS` chain: DNS plus 80/443 to public addresses only. |
+| Backups | Nightly verified `openclaw backup create` archives (mode 600, 14 days), plus a Proxmox backup job off the host. |
+
+## What the agent gets
+
+- **Model:** a local OpenAI-compatible server (here Strata serving
+  `qwen3.8-flash-next-iq2_xs` on `llm.paelab.com`).
+- **Web:** `web_search` through SearXNG and `web_fetch` through Firecrawl. Both
+  run on the gateway, so the sandbox itself stays without internet.
+- **Sandbox toolchains:** Python 3.13 with PDF libraries (pypdf, pdfplumber,
+  PyMuPDF, pikepdf, reportlab) and common ones (numpy, pandas, scipy,
+  matplotlib, openpyxl, python-docx, python-pptx, requests, bs4, lxml,
+  pydantic, pytest, ruff, ...; see `sandbox/requirements.txt`), Go 1.24,
+  Rust 1.85, Node 24 with pnpm, gcc, git, ripgrep, jq, poppler-utils, qpdf.
+- **Packages at runtime:** `pip`, `npm`, `go` and `cargo` installs through the
+  proxy allowlist. `/opt/venv` is read-only, so use a per-project venv:
+  `python3 -m venv --system-site-packages /workspace/proj/.venv`.
+
+## Requirements
+
+- Proxmox VE host. Tested VM: Ubuntu Server LTS, q35 + OVMF (UEFI), 1 socket /
+  4 cores (CPU type `host`), 16 GB RAM (ballooning minimum = 16 GB), 80 GB disk
+  (VirtIO SCSI single, discard on), VirtIO NIC with the Proxmox firewall
+  enabled. Install OpenSSH and import your SSH key; do not install the Docker
+  snap.
+- An admin account (here `ocadmin`) that is the first user, so it is UID 1000
+  like the `node` user in the OpenClaw image.
+- An OpenAI-compatible model server, and SearXNG and Firecrawl instances,
+  reachable from the VM.
 
 ## Quick start
 
-On a fresh Ubuntu Server VM, logged in as the admin user with your SSH key
-installed (`ssh-copy-id`), run:
+On the fresh VM, logged in as the admin user with your SSH key installed:
 
 ```bash
 git clone https://github.com/davepae/openclaw-docker-vm.git
 cd openclaw-docker-vm && ./bootstrap.sh
 ```
 
-It runs phases 0 to 3b in order, prompts once for the sudo password and once
-for the Strata API key, then runs the checks. Every step is idempotent, so it
-is safe to re-run; `./bootstrap.sh --from N` resumes at a step. The Proxmox VM
-firewall (`firewall/proxmox-vm-rules.md`) and snapshots are done by hand.
+It prompts once for the sudo password and once for the model server's API key,
+then runs every phase and all the checks. Every step is idempotent, so it is
+safe to re-run on a built VM; `./bootstrap.sh --from N` resumes at a step.
 
-## Status
-
-| Phase | What | Status |
+| Step | What | Script |
 | --- | --- | --- |
-| 0 | VM base hardening and Docker Engine (`vm/harden.sh`) | done |
-| 1 | Network policy (`firewall/`) | done |
-| 2 | Gateway stack (`compose/`, `config/`) | done |
-| 3 | Sandbox image, policy, web tools (`sandbox/`, `config/`) | done |
-| 3b | Sandbox egress proxy (`compose/proxy/`) | done |
-| 4 | Access via SSH tunnel | |
-| 5 | Validation (`tests/validate.sh`) | |
-| 6 | Hardening: read-only root, plugin allowlist, backups (`backup/`) | ready |
+| 1 | Base hardening, Docker Engine | `vm/harden.sh` |
+| 2 | Firewall rules and Docker networks | `firewall/install.sh` |
+| 3 | Gateway container | `compose/install.sh` |
+| 4 | Sandbox image, web plugins | `sandbox/install.sh` |
+| 5 | Sandbox egress proxy | `sandbox/egress-install.sh` |
+| 6 | Nightly backups | `backup/install.sh` |
+| 7 | Checks | `tests/phase*-check.sh` |
 
-## Phase 0
+Done by hand, outside the VM:
 
-```bash
-git clone https://github.com/davepae/openclaw-docker-vm.git
-cd openclaw-docker-vm
-sudo ./vm/harden.sh
-```
+1. Proxmox VM firewall, from `firewall/proxmox-vm-rules.md` (first build only).
+2. A Proxmox backup job for the VM to storage on another machine
+   (Datacenter → Backup → Add, mode Snapshot).
+3. A Proxmox snapshot of the finished VM.
 
-The script refuses to run if `~/.ssh/authorized_keys` is empty, because it turns
-off password login. Before closing your session, confirm key login works from a
-second terminal. Then log out and back in, enable the QEMU guest agent in
-Proxmox, and take a snapshot named `base`.
+## Adapting it to your network
 
-## Phase 1
+The values specific to this lab live in four places:
 
-```bash
-cd ~/openclaw-docker-vm && git pull
-sudo ./firewall/install.sh      # DOCKER-USER allowlist + oc-gw network
-./tests/phase1-check.sh         # must end "0 failed"
-```
+| File | Holds |
+| --- | --- |
+| `firewall/firewall.conf` | IPs and ports the gateway may reach, LAN DNS, Docker subnets |
+| `firewall/proxmox-vm-rules.md` | VM firewall rules: admin machine, LAN services |
+| `config/openclaw.json5` | Model server URL and model, SearXNG and Firecrawl URLs, sandbox limits |
+| `compose/.env` (created on the VM, git-ignored) | OpenClaw version and image digest, gateway token, API keys |
 
-Then apply the Proxmox VM firewall in `firewall/proxmox-vm-rules.md`, run the
-check again, and take a snapshot named `phase1`.
+## Using it
 
-The allowlist lives in `firewall/firewall.conf`. To change it, edit that file
-and re-run `install.sh`.
-
-## Phase 2
-
-```bash
-cd ~/openclaw-docker-vm && git pull
-./compose/install.sh            # asks for the Strata API key once
-./tests/phase2-check.sh         # must end "0 failed"
-```
-
-`install.sh` creates `compose/.env` (mode 600, git-ignored) with a generated
-gateway token, your Strata key and the Docker group ID. It pulls the release
-named in `OPENCLAW_VERSION`, pins its digest in `OPENCLAW_IMAGE`, and builds a
-local image that adds the Docker CLI (needed for Phase 3 sandboxes). It
-validates `config/openclaw.json5`, writes the exec approvals policy, and
-starts the gateway. Re-running it stops the gateway first, then restarts it.
-
-Run OpenClaw CLI commands inside the gateway container, which holds the state
-lock: `docker exec -it openclaw-gateway openclaw <command>`.
-
-What Phase 2 runs:
-
-- Gateway as UID 1000, all capabilities dropped, 4 GB / 2 CPU limit, on
-  `oc-gw` (Strata, SearXNG, Firecrawl and DNS only).
-- Config mounted read-only from the repo (`OPENCLAW_CONFIG_READONLY=1`).
-- Model: `strata/qwen3.8-flash-next-iq2_xs`.
-- Exec: sandbox only (`tools.exec.host: sandbox`); gateway exec denied by the
-  approvals policy; elevated off.
-
-To change the config: edit `config/openclaw.json5`, commit, `git pull` on the
-VM, then `cd compose && docker compose up -d --force-recreate openclaw-gateway`.
-
-To upgrade OpenClaw: snapshot the VM, change `OPENCLAW_VERSION` in
-`compose/.env`, re-run `./compose/install.sh`.
-
-## Phase 3
-
-```bash
-cd ~/openclaw-docker-vm && git pull
-./sandbox/install.sh            # builds the sandbox image (several minutes), installs web plugins, restarts
-./tests/phase3-check.sh         # static checks
-# ask the agent in the Control UI to run:  python3 --version && go version && pwd
-./tests/phase3-check.sh         # now also inspects the live sandbox
-```
-
-Every session runs its tools in `openclaw-sandbox-local:1`: one container per
-agent, no network, read-only root, UID 1000, all capabilities dropped, 6 GB /
-2 CPUs, with `/srv/openclaw/workspace` mounted read-write at `/workspace`.
-
-Baked into the image (there is no network to install anything later):
-Python 3.13 with PDF libraries (pypdf, pdfplumber, PyMuPDF, pikepdf,
-reportlab) and common ones (numpy, pandas, scipy, matplotlib, openpyxl,
-python-docx, python-pptx, requests, bs4, lxml, pydantic, pytest, ruff, ...;
-full list in `sandbox/requirements.txt`), Go 1.24, Rust 1.85, Node 24 with
-pnpm, gcc, git, ripgrep, jq, poppler-utils and qpdf. Caches live in
-`/workspace/.cache`.
-
-Web tools: `web_search` through SearXNG and `web_fetch` through Firecrawl, both
-on intelnuc6. Their plugins are installed into `/srv/openclaw/state` by a
-one-shot container with internet access, because the gateway has none.
-
-To add a tool: edit `sandbox/Dockerfile` or `sandbox/requirements.txt`, bump
-the image tag in both `sandbox/install.sh` and `config/openclaw.json5`
-(`openclaw-sandbox-local:2`), commit, pull, and re-run `./sandbox/install.sh`.
-
-**Do not set `tools.exec.mode`.** In 2026.10.10, `mode: "deny"` also blocks
-exec inside the sandbox. Gateway exec is blocked by the approvals policy.
-
-## Phase 3b
-
-```bash
-cd ~/openclaw-docker-vm && git pull
-./sandbox/egress-install.sh     # firewall + networks (sudo), proxy, gateway restart
-# in a NEW chat, ask the agent to run:  pip download --no-deps -d /tmp/t six && ls /tmp/t
-./tests/phase3b-check.sh
-./tests/phase3-check.sh         # still passes; sandbox network is now oc-sbx
-```
-
-Sandboxes move from no network to `oc-sbx`, a Docker internal network whose
-only other member is the Squid proxy (`oc-proxy`, 172.30.20.2:3128). Squid
-allows HTTPS to the domains in `compose/proxy/allowlist.txt` and nothing else:
-no plain HTTP, no private addresses, no TLS interception. Its outbound side,
-`oc-egress`, is limited by the `OC-EGRESS` firewall chain to DNS plus 80/443 on
-public addresses.
-
-Default allowlist: PyPI, npm, the Go module proxy and crates.io. GitHub is
-off: access to clone is also access to push, an easy way to send data out.
-
-- **Change the allowlist:** edit `compose/proxy/allowlist.txt`, commit, pull,
-  then `cd compose && docker compose restart oc-proxy`.
-- **Watch decisions:** `docker logs -f oc-proxy` (`TCP_TUNNEL/200` allowed,
-  `TCP_DENIED/403` denied).
-- **Installing packages in the sandbox:** `/opt/venv` is read-only, so use a
-  per-project venv in the workspace, e.g.
-  `python3 -m venv --system-site-packages /workspace/proj/.venv`.
-- **Cut sandboxes off again:** set `network: "none"` in `config/openclaw.json5`
-  and re-run `./compose/install.sh`.
-
-## Phase 6
-
-```bash
-cd ~/openclaw-docker-vm && git pull
-./compose/install.sh            # read-only gateway root + plugin allowlist
-sudo ./backup/install.sh        # nightly backups, plus one taken now
-./tests/phase6-check.sh
-```
-
-- **Read-only gateway root.** Only `/srv/openclaw` (state, workspace, update
-  captures, caches), the auth-secrets bind and tmpfs mounts (`/tmp`, and
-  `.cache`, `.npm`, `.docker` under `/home/node`) are writable. If a future
-  release writes somewhere new, the logs show `EROFS`; add a tmpfs for that
-  path in `compose/docker-compose.yml`.
-- **Plugin allowlist.** `plugins.allow` in `config/openclaw.json5` loads only
-  `searxng`, `firecrawl`, `memory-core` and `device-pair` (Control UI
-  pairing). Without it, 2026.10.10 enables about 40 bundled plugins,
-  including browser control, computer use, file transfer and cloud model
-  providers.
-- **Backups.** `openclaw-backup.timer` runs `openclaw backup create --verify`
-  nightly at about 03:15 into `/srv/openclaw/backups` (mode 600, 14 days
-  kept). It is safe while the gateway runs; never copy live `.sqlite` files.
-  Run one now with `sudo systemctl start openclaw-backup`.
-- **Off-host copies.** Those archives live on the VM's own disk. In Proxmox,
-  add a backup job for this VM (Datacenter → Backup → Add, mode Snapshot) to
-  storage on another machine (a NAS or Proxmox Backup Server). `compose/.env`
-  is not in the OpenClaw archive but is in the VM backup; its only secret you
-  can't regenerate is the Strata key.
-
-**Restore OpenClaw state** from an archive: `openclaw backup restore`
-extracts into a fresh directory, never over live state.
-
-```bash
-docker exec openclaw-gateway openclaw backup restore \
-  /srv/openclaw/backups/<archive>.tar.gz --target /srv/openclaw/restore-<date>
-# inspect it, then with the gateway stopped (cd compose && docker compose stop
-# openclaw-gateway), move the restored state and workspace into place and run
-# ./compose/install.sh. For a full disaster, restore the Proxmox VM backup.
-```
-
-**Upgrading OpenClaw:**
-1. Proxmox snapshot, then `sudo systemctl start openclaw-backup`.
-2. Set the new `OPENCLAW_VERSION` in `compose/.env`.
-3. `./compose/install.sh`, then `./sandbox/install.sh` (upgrades the plugins
-   to the matching version).
-4. `docker exec openclaw-gateway openclaw plugins doctor`. The Firecrawl plugin
-   currently reports an `[info]` notice that it uses APIs retiring
-   2026-10-01; if a release removes them, this is where it shows.
-5. Run all the checks.
-
-## Reaching the Control UI
-
-From the MacBook:
+From the admin machine, open a tunnel and browse to the Control UI:
 
 ```bash
 ssh -N -L 18789:127.0.0.1:18789 ocadmin@openclaw.paelab.com
-# then open http://127.0.0.1:18789/ and paste the token from compose/.env
+# then open http://127.0.0.1:18789/ and paste the token:
+#   grep OPENCLAW_GATEWAY_TOKEN ~/openclaw-docker-vm/compose/.env
 ```
 
-If the UI says pairing is required, approve the browser on the VM:
+If the UI asks for pairing, approve the browser on the VM:
 
 ```bash
 docker exec -it openclaw-gateway openclaw devices list
 docker exec -it openclaw-gateway openclaw devices approve <requestId>
 ```
+
+Run OpenClaw CLI commands inside the gateway container, which holds the state
+lock: `docker exec -it openclaw-gateway openclaw <command>`.
+
+## Day-to-day changes
+
+| Change | How |
+| --- | --- |
+| OpenClaw config | Edit `config/openclaw.json5`, commit, `git pull` on the VM, `./compose/install.sh` |
+| Gateway LAN allowlist | Edit `firewall/firewall.conf`, `sudo ./firewall/install.sh` |
+| Sandbox package allowlist | Edit `compose/proxy/allowlist.txt`, then `cd compose && docker compose restart oc-proxy` |
+| Sandbox tools | Edit `sandbox/Dockerfile` or `sandbox/requirements.txt`, bump the image tag (`openclaw-sandbox-local:N`) in `sandbox/install.sh`, `config/openclaw.json5` and `tests/phase3-check.sh`, then `./sandbox/install.sh` |
+| Cut sandboxes off the network | Set sandbox `network: "none"` in `config/openclaw.json5`, `./compose/install.sh` |
+| Watch proxy decisions | `docker logs -f oc-proxy` (`TCP_TUNNEL/200` allowed, `TCP_DENIED/403` denied) |
+| Back up now | `sudo systemctl start openclaw-backup` |
+
+`compose/install.sh` stops the gateway, validates the config, writes the exec
+approvals policy, recreates sandboxes so they pick up changes, and starts the
+gateway again. If a step fails, it starts the previous gateway.
+
+## Upgrading OpenClaw
+
+1. Proxmox snapshot, then `sudo systemctl start openclaw-backup`.
+2. Set the new `OPENCLAW_VERSION` in `compose/.env`.
+3. `./compose/install.sh`, then `./sandbox/install.sh` (upgrades the plugins to
+   the matching version).
+4. `docker exec openclaw-gateway openclaw plugins doctor`. The Firecrawl plugin
+   currently reports an `[info]` notice that it uses OpenClaw APIs retiring
+   2026-10-01; if a release removes them, this is where it shows.
+5. Run all the checks.
+
+## Backups and restore
+
+`openclaw-backup.timer` runs `openclaw backup create --verify` nightly at about
+03:15 into `/srv/openclaw/backups`, keeping 14 days. It is safe while the
+gateway runs; never copy live `.sqlite` files. The archives sit on the VM's own
+disk, so pair them with the Proxmox backup job. `compose/.env` is in the VM
+backup but not the OpenClaw archive; its only secret you cannot regenerate is
+the model server's API key.
+
+`openclaw backup restore` extracts into a fresh directory, never over live
+state:
+
+```bash
+docker exec openclaw-gateway openclaw backup restore \
+  /srv/openclaw/backups/<archive>.tar.gz --target /srv/openclaw/restore-<date>
+# Inspect it. Then stop the gateway (cd compose && docker compose stop
+# openclaw-gateway), move the restored state and workspace into place, and run
+# ./compose/install.sh. For a full disaster, restore the Proxmox VM backup.
+```
+
+## Checks
+
+| Script | Checks | Covers |
+| --- | --- | --- |
+| `tests/phase1-check.sh` | 7 | Gateway network reaches only its allowlist; firewall survives restarts |
+| `tests/phase2-check.sh` | 12 | Exposure, container identity, read-only config, exec policy |
+| `tests/phase3-check.sh` | 21 | Sandbox config, plugins, and the live sandbox's isolation and tools |
+| `tests/phase3b-check.sh` | 18 | Proxy isolation and the allow/deny behavior seen from the sandbox |
+| `tests/phase6-check.sh` | 11 | Read-only gateway root, loaded plugins, backups |
+
+The live-sandbox sections need a running sandbox: ask the agent to run any
+command in a new chat, then re-run the check.
+
+## Things worth knowing
+
+- **Do not set `tools.exec.mode`.** In 2026.10.10, `mode: "deny"` also blocks
+  exec inside the sandbox. Gateway exec is blocked by the approvals policy.
+- **The gateway image adds the Docker CLI.** The published OpenClaw image does
+  not include it, and the gateway needs it to start sandboxes
+  (`compose/Dockerfile.gateway`).
+- **Paths are identical on host and gateway.** Sandboxes are created by the
+  host's Docker daemon, so `/srv/openclaw` is mounted at the same path inside
+  the gateway.
+- **The config directory is mounted, not the file.** A `git pull` replaces the
+  file, and a single-file mount would keep showing the old one.
+- **`plugins list` is not what loads.** It shows the plugin registry. The
+  gateway's startup line (`http server listening (4 plugins: ...)`) is the
+  real set.
+- **Sandbox `/tmp` is `noexec`.** Go's temporary build directory is therefore
+  in the workspace (`GOTMPDIR`).
+
+## Layout
+
+```
+bootstrap.sh            one-command build (steps 1-7)
+vm/harden.sh            base hardening and Docker Engine
+firewall/               DOCKER-USER chains, networks, Proxmox VM rules
+compose/                gateway and proxy stack, .env template, gateway image
+compose/proxy/          Squid config and package allowlist
+config/                 OpenClaw config (read-only in the gateway), approvals policy
+sandbox/                sandbox image, install scripts
+backup/                 nightly backup script and systemd units
+tests/                  check scripts, one per phase
+```
+
+## License
+
+[MIT](LICENSE)
