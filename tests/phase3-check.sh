@@ -12,7 +12,7 @@ for _ in $(seq 1 40); do
 done
 
 GW=openclaw-gateway
-IMG="openclaw-sandbox-local:1"
+IMG="openclaw-sandbox-local:2"
 pass=0; fail=0; skip=0
 ok()  { echo "PASS  $1"; ((pass++)); }
 bad() { echo "FAIL  $1"; ((fail++)); }
@@ -56,6 +56,7 @@ else
   check "gateway API unreachable from sandbox" bash -c "[ -n '${gwip}' ] && ! docker exec -e HTTPS_PROXY= -e https_proxy= -e HTTP_PROXY= -e http_proxy= $sbx sh -lc 'curl -s -m 4 http://${gwip}:18789/healthz' >/dev/null 2>&1"
   check "no DNS from sandbox (no DNS exfiltration channel)" bash -c "! docker exec $sbx getent hosts example.com >/dev/null 2>&1"
   check "Python PDF libs import"               docker exec "$sbx" sh -lc 'python3 -c "import pypdf, fitz, pdfplumber, reportlab"'
+  check "LibreOffice converts DOCX to PDF"   docker exec "$sbx" sh -lc 'cd /tmp && python3 -c "import docx; d = docx.Document(); d.add_paragraph(\"lo check\"); d.save(\"locheck.docx\")" && soffice --headless --convert-to pdf --outdir /tmp locheck.docx >/dev/null 2>&1 && pdftotext /tmp/locheck.pdf - | grep -q "lo check"'
   check "Go, Rust and Node present"            docker exec "$sbx" sh -lc 'go version && cargo --version && node --version'
   check "workspace writable by the sandbox"    docker exec "$sbx" sh -lc 'touch /workspace/.phase3-write-test && rm /workspace/.phase3-write-test'
 fi

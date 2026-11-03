@@ -6,7 +6,7 @@ Docker, every agent session runs its tools in a locked-down Docker sandbox, and
 the whole stack uses local services only: models from a local inference server,
 web search and page fetching from self-hosted SearXNG and Firecrawl.
 
-One command builds the VM, and 72 automated checks verify it.
+One command builds the VM, and 73 automated checks verify it.
 
 ## Security model
 
@@ -85,6 +85,16 @@ HTTPS.
   matplotlib, openpyxl, python-docx, python-pptx, requests, bs4, lxml,
   pydantic, pytest, ruff, ...; see `sandbox/requirements.txt`), Go 1.24,
   Rust 1.85, Node 24 with pnpm, gcc, git, ripgrep, jq, poppler-utils, qpdf.
+- **Office documents:** create and edit DOCX, XLSX, PPTX and CSV with the
+  Python libraries, plus headless LibreOffice (Writer, Calc, Impress) for
+  conversion to PDF, formula recalculation and rendering. Fonts include
+  metric-compatible replacements for Arial, Times New Roman, Calibri and
+  Cambria, so layouts hold. The sandbox's LibreOffice profile always
+  recalculates formulas on load; its default trusts cached values, which are
+  missing or stale in files written by openpyxl.
+  - Convert: `soffice --headless --convert-to pdf --outdir out report.docx`
+  - Recalculate a workbook: `soffice --headless --convert-to xlsx --outdir out model.xlsx`
+  - Render a page to check layout: `pdftoppm -png -r 80 -f 1 -l 1 out/report.pdf out/page`
 - **Packages at runtime:** `pip`, `npm`, `go` and `cargo` installs through the
   proxy allowlist. `/opt/venv` is read-only, so use a per-project venv:
   `python3 -m venv --system-site-packages /workspace/proj/.venv`.
@@ -162,6 +172,18 @@ docker exec -it openclaw-gateway openclaw devices approve <requestId>
 Run OpenClaw CLI commands inside the gateway container, which holds the state
 lock: `docker exec -it openclaw-gateway openclaw <command>`.
 
+**Files in and out.** Attach files in the Control UI to put them in the
+workspace. To get the agent's files out, pull them from your own machine, for
+example from a folder the agent writes to:
+
+```bash
+rsync -av ocadmin@openclaw.paelab.com:/srv/openclaw/workspace/outbox/ ~/OpenClaw-outbox/
+```
+
+Pulling keeps the VM inbound-only, and the agent never writes to a share that
+other machines open files from. Treat documents the agent produced as
+untrusted content.
+
 ## Day-to-day changes
 
 | Change | How |
@@ -169,7 +191,7 @@ lock: `docker exec -it openclaw-gateway openclaw <command>`.
 | OpenClaw config | Edit `config/openclaw.json5`, commit, `git pull` on the VM, `./compose/install.sh` |
 | Gateway LAN allowlist | Edit `firewall/firewall.conf`, `sudo ./firewall/install.sh` |
 | Sandbox package allowlist | Edit `compose/proxy/allowlist.txt`, then `cd compose && docker compose restart oc-proxy` |
-| Sandbox tools | Edit `sandbox/Dockerfile` or `sandbox/requirements.txt`, bump the image tag (`openclaw-sandbox-local:N`) in `sandbox/install.sh`, `config/openclaw.json5` and `tests/phase3-check.sh`, then `./sandbox/install.sh` |
+| Sandbox tools | Edit `sandbox/Dockerfile` or `sandbox/requirements.txt`, bump the image tag (`openclaw-sandbox-local:N`) in `sandbox/install.sh`, `config/openclaw.json5` and `tests/phase3-check.sh`, then `./sandbox/install.sh`. Remove the old image afterwards (`docker image rm openclaw-sandbox-local:<old N>`) |
 | Cut sandboxes off the network | Set sandbox `network: "none"` in `config/openclaw.json5`, `./compose/install.sh` |
 | Watch proxy decisions | `docker logs -f oc-proxy` (`TCP_TUNNEL/200` allowed, `TCP_DENIED/403` denied) |
 | Back up now | `sudo systemctl start openclaw-backup` |
@@ -215,7 +237,7 @@ docker exec openclaw-gateway openclaw backup restore \
 | --- | --- | --- |
 | `tests/phase1-check.sh` | 7 | Gateway network reaches only its allowlist; firewall survives restarts |
 | `tests/phase2-check.sh` | 12 | Exposure, container identity, read-only config, exec policy |
-| `tests/phase3-check.sh` | 24 | Sandbox config, plugins, and the live sandbox's isolation, DNS and tools |
+| `tests/phase3-check.sh` | 25 | Sandbox config, plugins, and the live sandbox's isolation, DNS and tools |
 | `tests/phase3b-check.sh` | 18 | Proxy isolation and the allow/deny behavior seen from the sandbox |
 | `tests/phase6-check.sh` | 11 | Read-only gateway root, loaded plugins, backups |
 

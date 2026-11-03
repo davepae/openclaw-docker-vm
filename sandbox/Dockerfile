@@ -10,7 +10,10 @@ FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
 
-# Base tools, compilers, Go, Rust, Python, and PDF command-line utilities.
+# Base tools, compilers, Go, Rust, Python, PDF command-line utilities, and
+# headless LibreOffice (Writer, Calc, Impress) with metric-compatible fonts
+# for Office documents (Liberation: Arial/Times/Courier; Carlito: Calibri;
+# Caladea: Cambria).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bash ca-certificates curl wget git jq ripgrep fd-find file less tree procps \
@@ -20,6 +23,8 @@ RUN apt-get update \
       golang-go \
       rustc cargo \
       poppler-utils qpdf ghostscript \
+      libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui \
+      fonts-dejavu-core fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea \
       libffi-dev libssl-dev libjpeg-dev zlib1g-dev libxml2-dev libxslt1-dev \
  && rm -rf /var/lib/apt/lists/*
 
@@ -39,6 +44,7 @@ RUN python3 -m venv /opt/venv \
  && /opt/venv/bin/pip freeze > /opt/venv/requirements.lock
 
 COPY profile.sh /etc/profile.d/openclaw-sandbox.sh
+COPY libreoffice-registrymodifications.xcu /etc/openclaw-sandbox/libreoffice-registrymodifications.xcu
 
 # UID/GID 1000 matches /srv/openclaw/workspace on the host.
 RUN groupadd -g 1000 sandbox && useradd -u 1000 -g 1000 -m -s /bin/bash sandbox

@@ -6,7 +6,7 @@ set -Eeuo pipefail  # -E: the ERR trap also fires inside functions
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
 
-SANDBOX_IMAGE="openclaw-sandbox-local:1"   # must match agents.defaults.sandbox.docker.image
+SANDBOX_IMAGE="openclaw-sandbox-local:2"   # must match agents.defaults.sandbox.docker.image
 log() { printf '\n==> %s\n' "$*"; }
 
 [[ $EUID -ne 0 ]] || { echo "Run as ocadmin, not with sudo."; exit 1; }
@@ -60,6 +60,25 @@ printf "#include <stdio.h>\nint main(void){puts(\"ok\");return 0;}\n" > t.c
 cc t.c -o t
 test "$(./t)" = ok
 echo "c       gcc build + run ok"
+python3 - <<PY
+import docx, openpyxl, pptx
+d = docx.Document(); d.add_paragraph("lo docx ok"); d.save("lodoc.docx")
+p = pptx.Presentation(); p.slides.add_slide(p.slide_layouts[0]).shapes.title.text = "lo pptx ok"; p.save("lodeck.pptx")
+wb = openpyxl.Workbook(); ws = wb.active; ws["A1"] = 2; ws["A2"] = 3; ws["A3"] = "=SUM(A1:A2)*10"; wb.save("losheet.xlsx")
+PY
+mkdir lo-out
+soffice --headless --convert-to pdf --outdir lo-out lodoc.docx lodeck.pptx >/dev/null 2>&1
+pdftotext lo-out/lodoc.pdf - | grep -q "lo docx ok"
+pdftotext lo-out/lodeck.pdf - | grep -q "lo pptx ok"
+soffice --headless --convert-to xlsx --outdir lo-out losheet.xlsx >/dev/null 2>&1
+python3 - <<PY
+import openpyxl
+assert openpyxl.load_workbook("lo-out/losheet.xlsx", data_only=True).active["A3"].value == 50
+PY
+grep -q OOXMLRecalcMode "$HOME/.config/libreoffice/4/user/registrymodifications.xcu"
+pdftoppm -r 50 -png -f 1 -l 1 lo-out/lodoc.pdf lo-out/page
+test -s lo-out/page-1.png
+echo "office  $(soffice --version | cut -d" " -f1-2): docx/pptx to pdf, xlsx recalc, page render ok"
 if curl -s -m 3 https://example.com >/dev/null 2>&1; then echo "UNEXPECTED: network reachable"; exit 1; fi
 echo "network none (as intended)"
 '

@@ -54,7 +54,7 @@
         scope: "agent",
         workspaceAccess: "rw",
         docker: {
-          image: "openclaw-sandbox-local:1", // built by sandbox/install.sh
+          image: "openclaw-sandbox-local:2", // built by sandbox/install.sh
           // Phase 3b: an internal network whose only exit is the Squid proxy
           // (HTTPS to allowlisted package registries). Set "none" to cut it off.
           network: "oc-sbx",

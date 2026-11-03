@@ -7,6 +7,13 @@
 export HOME=/tmp/home
 mkdir -p "$HOME" 2>/dev/null
 
+# LibreOffice profile: always recalculate spreadsheet formulas on load.
+LO_USER="$HOME/.config/libreoffice/4/user"
+if [ ! -f "$LO_USER/registrymodifications.xcu" ]; then
+  mkdir -p "$LO_USER" 2>/dev/null
+  cp /etc/openclaw-sandbox/libreoffice-registrymodifications.xcu "$LO_USER/registrymodifications.xcu" 2>/dev/null
+fi
+
 export XDG_CACHE_HOME=/workspace/.cache
 export PIP_CACHE_DIR="$XDG_CACHE_HOME/pip"
 export npm_config_cache="$XDG_CACHE_HOME/npm"
