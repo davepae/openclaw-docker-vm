@@ -87,9 +87,9 @@
     exec: { host: "sandbox" },
     // No escape hatch out of the sandbox.
     elevated: { enabled: false },
-    // Tuned for a small local model: show tool schemas directly instead of
+    // Tuned for a heavily quantized local model: show tool schemas directly instead of
     // behind a search step (the default for OpenAI-compatible providers), and
-    // drop the progress-card UI tool. The model was spending its turns on
+    // drop the progress-card UI tool. The model (125B at IQ2_XS) was spending its turns on
     // tool_search and progress_card instead of the task.
     toolSearch: false,
     updatePlan: false,
