@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenClaw gateway egress allowlist (DOCKER-USER)
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/oc-firewall.sh /etc/openclaw/firewall.conf
+
+[Install]
+WantedBy=docker.service
