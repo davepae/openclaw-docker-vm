@@ -11,7 +11,7 @@ bad() { echo "FAIL  $1"; ((fail++)); }
 check() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then ok "$name"; else bad "$name"; fi; }
 check_not() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then bad "$name"; else ok "$name"; fi; }
 gwnode() { docker exec "$GW" node -e "$1"; }
-cli() { docker compose run --rm -T openclaw-cli "$@" 2>&1; }
+# OpenClaw CLI commands run inside the gateway container, which holds the state lock.
 
 echo "-- exposure"
 listeners="$(ss -Htln 'sport = :18789' | awk '{print $4}' | sort -u | tr '\n' ' ')"
@@ -26,11 +26,11 @@ check_not "no internet from the gateway" gwnode "fetch('https://example.com',{si
 check "Strata serves ${MODEL} to the gateway" gwnode "fetch('http://llm.paelab.com:8080/v1/models',{headers:{Authorization:'Bearer '+process.env.STRATA_API_KEY},signal:AbortSignal.timeout(10000)}).then(r=>r.text()).then(t=>process.exit(t.includes('${MODEL}')?0:1),()=>process.exit(1))"
 
 echo "-- policy"
-check_not "config is read-only" cli config set gateway.port 1
-check "default model is strata/${MODEL}" bash -c "docker compose run --rm -T openclaw-cli config get agents.defaults.model.primary 2>&1 | grep -q 'strata/${MODEL}'"
-check "host exec mode is deny" bash -c "docker compose run --rm -T openclaw-cli config get tools.exec.mode 2>&1 | grep -q deny"
-check "elevated is disabled"   bash -c "docker compose run --rm -T openclaw-cli config get tools.elevated.enabled 2>&1 | grep -q false"
-check "approvals: security=deny, askFallback=deny" bash -c "docker compose run --rm -T openclaw-cli approvals get 2>&1 | grep -q 'security=deny, ask=always, askFallback=deny'"
+check "config is read-only (write refused)" bash -c "docker exec $GW openclaw config set gateway.port 1 2>&1 | grep -qi 'external deployment source'"
+check "default model is strata/${MODEL}" bash -c "docker exec $GW openclaw config get agents.defaults.model.primary 2>&1 | grep -q 'strata/${MODEL}'"
+check "host exec mode is deny" bash -c "docker exec $GW openclaw config get tools.exec.mode 2>&1 | grep -q deny"
+check "elevated is disabled"   bash -c "docker exec $GW openclaw config get tools.elevated.enabled 2>&1 | grep -q false"
+check "approvals: security=deny, askFallback=deny" bash -c "docker exec $GW openclaw approvals get 2>&1 | grep -q 'security=deny, ask=always, askFallback=deny'"
 
 echo
 echo "${pass} passed, ${fail} failed"

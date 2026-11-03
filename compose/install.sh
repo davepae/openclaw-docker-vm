@@ -57,6 +57,13 @@ docker compose build -q openclaw-gateway
 
 oneshot() { docker compose run --rm --no-deps -T --entrypoint node openclaw-gateway dist/index.js "$@"; }
 
+# One-shot commands need the state lock, so a running gateway is stopped first
+# (OpenClaw's recommended upgrade order: stop the old one, then start the new).
+if [[ "$(docker inspect -f '{{.State.Running}}' openclaw-gateway 2>/dev/null)" == "true" ]]; then
+  log "Stopping the running gateway"
+  docker compose stop openclaw-gateway
+fi
+
 log "Validating config/openclaw.json5"
 oneshot config validate
 
@@ -67,7 +74,7 @@ log "Starting the gateway"
 docker compose up -d openclaw-gateway
 
 printf '    waiting for health'
-for _ in $(seq 1 60); do
+for _ in $(seq 1 40); do
   status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' openclaw-gateway 2>/dev/null || true)"
   [[ "$status" == "healthy" ]] && break
   printf '.'; sleep 3
@@ -84,8 +91,7 @@ Phase 2 gateway is running.
 2. Browse to http://127.0.0.1:18789/ and paste the gateway token, shown by:
      grep OPENCLAW_GATEWAY_TOKEN ~/openclaw-docker-vm/compose/.env
 3. If the UI says "pairing required", approve the browser on the VM:
-     cd ~/openclaw-docker-vm/compose
-     docker compose run --rm openclaw-cli devices list
-     docker compose run --rm openclaw-cli devices approve <requestId>
+     docker exec -it openclaw-gateway openclaw devices list
+     docker exec -it openclaw-gateway openclaw devices approve <requestId>
 4. Then run ./tests/phase2-check.sh
 EOF

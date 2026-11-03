@@ -61,7 +61,10 @@ gateway token, your Strata key and the Docker group ID. It pulls the release
 named in `OPENCLAW_VERSION`, pins its digest in `OPENCLAW_IMAGE`, and builds a
 local image that adds the Docker CLI (needed for Phase 3 sandboxes). It
 validates `config/openclaw.json5`, writes the exec approvals policy, and
-starts the gateway.
+starts the gateway. Re-running it stops the gateway first, then restarts it.
+
+Run OpenClaw CLI commands inside the gateway container, which holds the state
+lock: `docker exec -it openclaw-gateway openclaw <command>`.
 
 What Phase 2 runs:
 
@@ -91,7 +94,6 @@ ssh -N -L 18789:127.0.0.1:18789 ocadmin@openclaw.paelab.com
 If the UI says pairing is required, approve the browser on the VM:
 
 ```bash
-cd ~/openclaw-docker-vm/compose
-docker compose run --rm openclaw-cli devices list
-docker compose run --rm openclaw-cli devices approve <requestId>
+docker exec -it openclaw-gateway openclaw devices list
+docker exec -it openclaw-gateway openclaw devices approve <requestId>
 ```

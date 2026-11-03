@@ -60,14 +60,23 @@ services:
         limits:
           memory: 4g
           cpus: "2.0"
-    # Health: the image's built-in HEALTHCHECK probes /healthz.
+    # Same probe as the image's built-in check, but every 30 s instead of 3 min.
+    healthcheck:
+      test: ["CMD", "node", "dist/docker-healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
-  # One-shot CLI, sharing the gateway's network namespace:
+  # One-shot CLI sharing the gateway's network and PID namespaces:
   #   docker compose run --rm openclaw-cli <command>
+  # Simpler equivalent: docker exec -it openclaw-gateway openclaw <command>
   openclaw-cli:
     image: openclaw-gateway-local:${OPENCLAW_VERSION:?}
     profiles: ["cli"]
     network_mode: "service:openclaw-gateway"
+    # OpenClaw verifies its state lock by PID; the CLI must see the gateway's processes.
+    pid: "service:openclaw-gateway"
     environment: *openclaw-env
     volumes: *openclaw-volumes
     entrypoint: ["node", "dist/index.js"]
