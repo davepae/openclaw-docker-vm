@@ -46,16 +46,61 @@
       // are created by the host's Docker daemon, which resolves host paths).
       workspace: "/srv/openclaw/workspace",
       model: { primary: "strata/qwen3.8-flash-next-iq2_xs" },
-      // Phase 3 switches this to mode "all" once the sandbox image exists.
-      sandbox: { mode: "off" },
+      // Every session runs its tools in a Docker sandbox: one long-lived
+      // container per agent, with the real workspace mounted at /workspace.
+      sandbox: {
+        mode: "all",
+        backend: "docker",
+        scope: "agent",
+        workspaceAccess: "rw",
+        docker: {
+          image: "openclaw-sandbox-local:1", // built by sandbox/build.sh
+          network: "none", // PoC: no network at all. Phase 3b: oc-sbx + proxy.
+          user: "1000:1000", // matches /srv/openclaw/workspace ownership
+          readOnlyRoot: true,
+          tmpfs: ["/tmp", "/var/tmp", "/run"],
+          memory: "6g",
+          memorySwap: "6g",
+          cpus: 2,
+          pidsLimit: 1024,
+          env: { LANG: "C.UTF-8" },
+        },
+      },
     },
   },
 
   tools: {
-    // Exec may only ever run in a sandbox. Until Phase 3 there is no sandbox,
-    // so exec is unavailable. Host (gateway) exec is denied outright.
-    exec: { host: "sandbox", mode: "deny" },
+    // Exec runs only in the sandbox. Do NOT set exec.mode here: in 2026.10.10
+    // mode "deny" also blocks exec inside the sandbox. Host (gateway) exec is
+    // blocked by the approvals policy instead (config/exec-approvals.json,
+    // security=deny), which OpenClaw applies to every non-sandbox exec.
+    exec: { host: "sandbox" },
     // No escape hatch out of the sandbox.
     elevated: { enabled: false },
+    web: {
+      // Search through SearXNG on intelnuc6.
+      search: { provider: "searxng", maxResults: 8, timeoutSeconds: 30 },
+      // Page fetches go through Firecrawl on intelnuc6; the gateway has no
+      // direct internet, so a plain fetch would fail.
+      fetch: { provider: "firecrawl" },
+    },
+  },
+
+  // Plugin packages are installed into the state dir by sandbox/install.sh
+  // (the gateway itself has no internet); this config only enables them.
+  plugins: {
+    entries: {
+      searxng: {
+        enabled: true,
+        config: { webSearch: { baseUrl: "http://172.16.3.100:8080" } },
+      },
+      firecrawl: {
+        enabled: true,
+        config: {
+          webSearch: { baseUrl: "http://172.16.3.100:3002", apiKey: "${FIRECRAWL_API_KEY}" },
+          webFetch: { baseUrl: "http://172.16.3.100:3002", apiKey: "${FIRECRAWL_API_KEY}" },
+        },
+      },
+    },
   },
 }

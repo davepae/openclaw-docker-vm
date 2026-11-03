@@ -14,8 +14,8 @@ that runs on the gateway is effectively root on the VM.
 | --- | --- | --- |
 | 0 | VM base hardening and Docker Engine (`vm/harden.sh`) | done |
 | 1 | Network policy (`firewall/`) | done |
-| 2 | Gateway stack (`compose/`, `config/`) | ready |
-| 3 | Sandbox image and policy (`sandbox/`, `config/`) | |
+| 2 | Gateway stack (`compose/`, `config/`) | done |
+| 3 | Sandbox image, policy, web tools (`sandbox/`, `config/`) | ready |
 | 3b | Sandbox egress proxy | after PoC |
 | 4 | Access via SSH tunnel | |
 | 5 | Validation (`tests/validate.sh`) | |
@@ -72,15 +72,47 @@ What Phase 2 runs:
   `oc-gw` (Strata, SearXNG, Firecrawl and DNS only).
 - Config mounted read-only from the repo (`OPENCLAW_CONFIG_READONLY=1`).
 - Model: `strata/qwen3.8-flash-next-iq2_xs`.
-- Exec: sandbox only, host exec denied in config and in the approvals policy;
-  elevated off. Sandboxing itself arrives in Phase 3, so until then the agent
-  can chat but cannot run commands.
+- Exec: sandbox only (`tools.exec.host: sandbox`); gateway exec denied by the
+  approvals policy; elevated off.
 
 To change the config: edit `config/openclaw.json5`, commit, `git pull` on the
 VM, then `cd compose && docker compose up -d --force-recreate openclaw-gateway`.
 
 To upgrade OpenClaw: snapshot the VM, change `OPENCLAW_VERSION` in
 `compose/.env`, re-run `./compose/install.sh`.
+
+## Phase 3
+
+```bash
+cd ~/openclaw-docker-vm && git pull
+./sandbox/install.sh            # builds the sandbox image (several minutes), installs web plugins, restarts
+./tests/phase3-check.sh         # static checks
+# ask the agent in the Control UI to run:  python3 --version && go version && pwd
+./tests/phase3-check.sh         # now also inspects the live sandbox
+```
+
+Every session runs its tools in `openclaw-sandbox-local:1`: one container per
+agent, no network, read-only root, UID 1000, all capabilities dropped, 6 GB /
+2 CPUs, with `/srv/openclaw/workspace` mounted read-write at `/workspace`.
+
+Baked into the image (there is no network to install anything later):
+Python 3.13 with PDF libraries (pypdf, pdfplumber, PyMuPDF, pikepdf,
+reportlab) and common ones (numpy, pandas, scipy, matplotlib, openpyxl,
+python-docx, python-pptx, requests, bs4, lxml, pydantic, pytest, ruff, ...;
+full list in `sandbox/requirements.txt`), Go 1.24, Rust 1.85, Node 24 with
+pnpm, gcc, git, ripgrep, jq, poppler-utils and qpdf. Caches live in
+`/workspace/.cache`.
+
+Web tools: `web_search` through SearXNG and `web_fetch` through Firecrawl, both
+on intelnuc6. Their plugins are installed into `/srv/openclaw/state` by a
+one-shot container with internet access, because the gateway has none.
+
+To add a tool: edit `sandbox/Dockerfile` or `sandbox/requirements.txt`, bump
+the image tag in both `sandbox/install.sh` and `config/openclaw.json5`
+(`openclaw-sandbox-local:2`), commit, pull, and re-run `./sandbox/install.sh`.
+
+**Do not set `tools.exec.mode`.** In 2026.10.10, `mode: "deny"` also blocks
+exec inside the sandbox. Gateway exec is blocked by the approvals policy.
 
 ## Reaching the Control UI
 

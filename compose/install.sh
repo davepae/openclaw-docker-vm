@@ -41,6 +41,8 @@ if [[ -z "$(getvar STRATA_API_KEY)" ]]; then
   setvar STRATA_API_KEY "$key"
 fi
 setvar DOCKER_GID "$(stat -c %g /var/run/docker.sock)"
+# Self-hosted Firecrawl ignores the key, but OpenClaw's Firecrawl tools require one.
+[[ -n "$(getvar FIRECRAWL_API_KEY)" ]] || setvar FIRECRAWL_API_KEY "selfhosted"
 
 # --- Pin the release by digest ---------------------------------------------------
 VERSION="$(getvar OPENCLAW_VERSION)"
@@ -71,7 +73,7 @@ log "Writing the exec approvals policy (host exec: deny)"
 oneshot approvals set --stdin < ../config/exec-approvals.json >/dev/null
 
 log "Starting the gateway"
-docker compose up -d openclaw-gateway
+docker compose up -d --force-recreate openclaw-gateway
 
 printf '    waiting for health'
 for _ in $(seq 1 40); do

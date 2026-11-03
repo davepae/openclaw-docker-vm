@@ -28,7 +28,7 @@ check "Strata serves ${MODEL} to the gateway" gwnode "fetch('http://llm.paelab.c
 echo "-- policy"
 check "config is read-only (write refused)" bash -c "docker exec $GW openclaw config set gateway.port 1 2>&1 | grep -qi 'external deployment source'"
 check "default model is strata/${MODEL}" bash -c "docker exec $GW openclaw config get agents.defaults.model.primary 2>&1 | grep -q 'strata/${MODEL}'"
-check "host exec mode is deny" bash -c "docker exec $GW openclaw config get tools.exec.mode 2>&1 | grep -q deny"
+check "exec host is sandbox-only" bash -c "docker exec $GW openclaw config get tools.exec.host 2>&1 | grep -qx sandbox"
 check "elevated is disabled"   bash -c "docker exec $GW openclaw config get tools.elevated.enabled 2>&1 | grep -q false"
 check "approvals: security=deny, askFallback=deny" bash -c "docker exec $GW openclaw approvals get 2>&1 | grep -q 'security=deny, ask=always, askFallback=deny'"
 

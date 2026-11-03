@@ -1,0 +1,45 @@
+# PDF
+pypdf
+pdfplumber
+pdfminer.six
+pymupdf
+pikepdf
+reportlab
+
+# Office documents and spreadsheets
+openpyxl
+xlsxwriter
+python-docx
+python-pptx
+
+# Data and plotting
+numpy
+pandas
+scipy
+matplotlib
+pillow
+tabulate
+
+# Web, HTML and parsing (network use needs Phase 3b)
+requests
+httpx
+beautifulsoup4
+lxml
+html5lib
+
+# Text, formats and templating
+pyyaml
+jinja2
+markdown
+python-dateutil
+jsonschema
+
+# CLI, testing and tooling
+rich
+click
+typer
+tqdm
+pydantic
+pytest
+ruff
+ipython

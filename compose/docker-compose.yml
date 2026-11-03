@@ -17,6 +17,7 @@ x-openclaw-env: &openclaw-env
   OPENCLAW_GATEWAY_PORT: "18789"
   OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?run install.sh first}
   STRATA_API_KEY: ${STRATA_API_KEY:?run install.sh first}
+  FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-selfhosted}
   OPENCLAW_DISABLE_BONJOUR: "1"
   TZ: ${TZ:-UTC}
 
