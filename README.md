@@ -46,7 +46,7 @@ socket), the gateway token, and anyone who can SSH to the VM.
 | Secrets in the workspace | Keys or tokens copied into `/srv/openclaw/workspace` | Nothing; the agent reads all of it | Never put secrets there |
 | Sandbox escape | A kernel or container runtime exploit | Non-root, no capabilities, no-new-privileges, read-only root, patched host | Low likelihood, critical impact |
 | Stolen gateway token | Read from the VM or its backups | Loopback only, SSH tunnel; `.env` and backups are mode 600 | The token is equivalent to VM root |
-| Poisoned search or fetch results | intelnuc6 is compromised | The same limits as prompt injection | Treat web content as hostile |
+| Poisoned search or fetch results | The host running SearXNG and Firecrawl is compromised | The same limits as prompt injection | Treat web content as hostile |
 
 The agent has all three ingredients of the classic AI data-leak pattern:
 access to private data (the workspace), exposure to untrusted content (the
