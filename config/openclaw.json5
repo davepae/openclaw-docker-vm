@@ -87,6 +87,12 @@
     exec: { host: "sandbox" },
     // No escape hatch out of the sandbox.
     elevated: { enabled: false },
+    // Tuned for a small local model: show tool schemas directly instead of
+    // behind a search step (the default for OpenAI-compatible providers), and
+    // drop the progress-card UI tool. The model was spending its turns on
+    // tool_search and progress_card instead of the task.
+    toolSearch: false,
+    updatePlan: false,
     // Sandboxed sessions only get a default tool allowlist, which omits web
     // tools. These two run on the gateway (which can reach SearXNG and
     // Firecrawl), not in the sandbox, so the sandbox itself stays offline.
