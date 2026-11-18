@@ -226,7 +226,10 @@ Take a Proxmox snapshot first; the script asks. It then:
    `./sandbox/install.sh` (plugins at the matching version),
 4. shows `openclaw plugins doctor` and runs all the checks.
 
-If either install step fails, it puts the previous version back the same way.
+The first start of a new version can take several minutes while OpenClaw
+migrates its state; the install waits up to 15 minutes for a healthy gateway
+and does not interrupt it. If either install step fails, it puts the previous
+version back the same way.
 That covers the image, plugins and config; a release that migrated OpenClaw's
 state may leave state the older one can't read, which is what the snapshot is
 for. The same script goes back to an older version (`./upgrade.sh 2026.10.10`).
