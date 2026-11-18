@@ -83,6 +83,11 @@ OpenClaw accepts a plain `http://` Firecrawl URL only on a private address;
 on a public address it must be `https://`. Self-hosted Firecrawl ignores the
 API key, so `compose/install.sh` sets it to `selfhosted`.
 
+To change only the model later, on the same server, `./compose/set-model.sh
+<model-id>` updates the id, display name and default model in the config and
+`tests/phase2-check.sh`, then applies them. It expects the provider to still
+be called `strata`.
+
 ### Check your edits
 
 1. `sudo ./firewall/install.sh` and `./tests/phase1-check.sh`. This checks the

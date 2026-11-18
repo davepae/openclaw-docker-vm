@@ -77,7 +77,7 @@ HTTPS.
 ## What the agent gets
 
 - **Model:** a local OpenAI-compatible server (in the reference build: Strata
-  serving `qwen3.8-flash-next-iq2_xs` on a LAN host; point
+  serving `qwen3.8-flash-next-iq3_xxs` on a LAN host; point
   `config/openclaw.json5` at your own server).
 - **Web:** `web_search` through SearXNG and `web_fetch` through Firecrawl. Both
   run on the gateway, so the sandbox itself stays without internet.
@@ -193,6 +193,7 @@ untrusted content.
 
 | Change | How |
 | --- | --- |
+| Switch to another model on the same server | `./compose/set-model.sh` shows the current model and what the server offers; `./compose/set-model.sh <model-id>` switches, applies and runs the Phase 2 check, and puts the previous model back if applying fails. `--context N` also sets the context window; `--help` for the rest |
 | OpenClaw config | Edit `config/openclaw.json5`, commit, `git pull` on the VM, `./compose/install.sh` |
 | Gateway LAN allowlist | Edit `firewall/firewall.conf`, `sudo ./firewall/install.sh` |
 | Sandbox package allowlist | Edit `compose/proxy/allowlist.txt`, then `cd compose && docker compose restart oc-proxy` |
@@ -267,7 +268,7 @@ command in a new chat, then re-run the check.
 - **Heavily quantized models need a simpler tool surface.** With an
   OpenAI-compatible provider, OpenClaw defaults to Tool Search (tool schemas
   behind a search step) and offers a `progress_card` UI tool. The local model
-  here (125B parameters, quantized to IQ2_XS, about 2.3 bits per weight) spent
+  at the time (125B parameters, quantized to IQ2_XS, about 2.3 bits per weight) spent
   a multi-step task on those and stopped; with `tools.toolSearch: false` and
   `tools.updatePlan: false` the same prompt succeeded. Aggressive quantization
   tends to cost precise tool use and multi-step planning more than chat. If a
@@ -281,7 +282,8 @@ command in a new chat, then re-run the check.
 bootstrap.sh            one-command build (steps 1-7)
 vm/harden.sh            base hardening and Docker Engine
 firewall/               DOCKER-USER chains, networks, Proxmox VM rules
-compose/                gateway and proxy stack, .env template, gateway image
+compose/                gateway and proxy stack, .env template, gateway image,
+                        set-model.sh
 compose/proxy/          Squid config and package allowlist
 config/                 OpenClaw config (read-only in the gateway), approvals policy
 sandbox/                sandbox image, install scripts
