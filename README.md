@@ -208,14 +208,32 @@ gateway again. If a step fails, it starts the previous gateway.
 
 ## Upgrading OpenClaw
 
-1. Proxmox snapshot, then `sudo systemctl start openclaw-backup`.
-2. Set the new `OPENCLAW_VERSION` in `compose/.env`.
-3. `./compose/install.sh`, then `./sandbox/install.sh` (upgrades the plugins to
-   the matching version).
-4. `docker exec openclaw-gateway openclaw plugins doctor`. The Firecrawl plugin
-   currently reports an `[info]` notice that it uses OpenClaw APIs retiring
-   2026-10-01; if a release removes them, this is where it shows.
-5. Run all the checks.
+`openclaw update` doesn't work here: it would rewrite the read-only config.
+OpenClaw is a pinned image, upgraded from the repo:
+
+```bash
+./upgrade.sh             # running version, and the latest and extended-stable releases
+./upgrade.sh 2026.11.5   # or: latest, stable
+```
+
+Take a Proxmox snapshot first; the script asks. It then:
+
+1. checks that the image and both web plugins exist for that version (nothing
+   changes if not),
+2. takes an OpenClaw backup,
+3. sets `OPENCLAW_VERSION` in `compose/.env` and runs `./compose/install.sh`
+   (pull, pin by digest, validate the config, restart) and
+   `./sandbox/install.sh` (plugins at the matching version),
+4. shows `openclaw plugins doctor` and runs all the checks.
+
+If either install step fails, it puts the previous version back the same way.
+That covers the image, plugins and config; a release that migrated OpenClaw's
+state may leave state the older one can't read, which is what the snapshot is
+for. The same script goes back to an older version (`./upgrade.sh 2026.10.10`).
+
+The Firecrawl plugin reports an `[info]` notice in `plugins doctor` that it
+uses OpenClaw APIs retiring 2026-10-01; if a release removes them, this is
+where it shows.
 
 ## Backups and restore
 
@@ -280,6 +298,7 @@ command in a new chat, then re-run the check.
 
 ```
 bootstrap.sh            one-command build (steps 1-7)
+upgrade.sh              OpenClaw version upgrades (and rollbacks)
 vm/harden.sh            base hardening and Docker Engine
 firewall/               DOCKER-USER chains, networks, Proxmox VM rules
 compose/                gateway and proxy stack, .env template, gateway image,
