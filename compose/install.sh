@@ -91,13 +91,25 @@ trap - ERR
 log "Starting the gateway"
 docker compose up -d --force-recreate openclaw-gateway
 
-printf '    waiting for health'
-for _ in $(seq 1 40); do
+# The first start after a version change can take minutes (state migrations,
+# waiting for a lease left by a stopped process). Interrupting it leaves a
+# half-migrated state, so wait up to 15 minutes while the container runs, and
+# give up early only if it stops.
+echo "    waiting for health (up to 15 minutes; the first start of a new version can be slow)"
+start=$SECONDS status=""
+while (( SECONDS - start < 900 )); do
   status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' openclaw-gateway 2>/dev/null || true)"
   [[ "$status" == "healthy" ]] && break
-  printf '.'; sleep 3
+  if [[ "$(docker inspect -f '{{.State.Running}}' openclaw-gateway 2>/dev/null)" != "true" ]]; then
+    echo "    the gateway container stopped"; break
+  fi
+  if (( (SECONDS - start) % 30 < 3 && SECONDS - start >= 30 )); then
+    last="$(docker logs --tail 1 openclaw-gateway 2>&1 | cut -c1-110)"
+    printf '    %3ds %s: %s\n' "$((SECONDS - start))" "${status:-?}" "$last"
+  fi
+  sleep 3
 done
-echo " ${status:-unknown}"
+echo "    ${status:-unknown} after $((SECONDS - start))s"
 [[ "$status" == "healthy" ]] || { echo "Gateway not healthy. Check: docker compose logs openclaw-gateway"; exit 1; }
 
 cat <<'EOF'
