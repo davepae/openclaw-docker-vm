@@ -10,7 +10,7 @@ for _ in $(seq 1 40); do
 done
 
 GW=openclaw-gateway
-MODEL="qwen3.8-flash-next-iq2_xs"
+MODEL="qwen3.8-flash-next-iq3_xxs"
 pass=0; fail=0
 ok()  { echo "PASS  $1"; ((pass++)); }
 bad() { echo "FAIL  $1"; ((fail++)); }

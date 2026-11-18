@@ -25,8 +25,8 @@
         timeoutSeconds: 300, // local model; long first-token times are normal
         models: [
           {
-            id: "qwen3.8-flash-next-iq2_xs",
-            name: "Qwen3.8 Flash Next IQ2_XS (Strata)",
+            id: "qwen3.8-flash-next-iq3_xxs",
+            name: "Qwen3.8 Flash Next IQ3_XXS (Strata)",
             reasoning: false,
             input: ["text", "image"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -45,7 +45,7 @@
       // Host path, mounted at the same path in the gateway (sibling sandboxes
       // are created by the host's Docker daemon, which resolves host paths).
       workspace: "/srv/openclaw/workspace",
-      model: { primary: "strata/qwen3.8-flash-next-iq2_xs" },
+      model: { primary: "strata/qwen3.8-flash-next-iq3_xxs" },
       // Every session runs its tools in a Docker sandbox: one long-lived
       // container per agent, with the real workspace mounted at /workspace.
       sandbox: {
@@ -89,7 +89,7 @@
     elevated: { enabled: false },
     // Tuned for a heavily quantized local model: show tool schemas directly instead of
     // behind a search step (the default for OpenAI-compatible providers), and
-    // drop the progress-card UI tool. The model (125B at IQ2_XS) was spending its turns on
+    // drop the progress-card UI tool. The model (125B at IQ2_XS, when this was tuned) was spending its turns on
     // tool_search and progress_card instead of the task.
     toolSearch: false,
     updatePlan: false,
